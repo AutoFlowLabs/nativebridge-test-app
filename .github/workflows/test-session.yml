@@ -1,0 +1,149 @@
+name: Test Session Parsing
+
+# Manual trigger only - for testing
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test-*'
+
+env:
+  DEFAULT_DEVICE_ID: '67a642531a4aa535498192f8'
+  DEFAULT_SESSION_VALIDITY: '120'
+  DEFAULT_REGION: 'ind'
+
+jobs:
+  test-session-parsing:
+    name: Test Session Config Parsing
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout code with full history
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history including tag annotations
+
+      # Extract version and parse session config
+      - name: Extract version and session config from tag
+        id: get_version
+        run: |
+          # Get tag name (e.g., test-1.0.0 or v1.1.8)
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "📋 Testing tag: $TAG_NAME"
+          echo ""
+
+          # Get full tag message
+          echo "📄 Full tag message:"
+          echo "─────────────────────────────────────────"
+          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG_NAME")
+          echo "$TAG_MESSAGE"
+          echo "─────────────────────────────────────────"
+          echo ""
+
+          # Check if session is enabled
+          echo "🔍 Checking for session markers..."
+          if echo "$TAG_MESSAGE" | grep -q "\[NB_SESSION_ENABLED\]"; then
+            echo "✅ SESSION_ENABLED=true"
+            echo "SESSION_ENABLED=true" >> $GITHUB_OUTPUT
+
+            # Extract device ID
+            DEVICE_ID=$(echo "$TAG_MESSAGE" | grep -o "\[NB_DEVICE_ID:[^]]*\]" | sed 's/\[NB_DEVICE_ID://;s/\]//')
+            if [ -n "$DEVICE_ID" ]; then
+              echo "✅ Found Device ID: $DEVICE_ID"
+              echo "SESSION_DEVICE_ID=$DEVICE_ID" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️  No device ID in tag, will use default: ${{ env.DEFAULT_DEVICE_ID }}"
+            fi
+
+            # Extract session validity
+            VALIDITY=$(echo "$TAG_MESSAGE" | grep -o "\[NB_SESSION_VALIDITY:[^]]*\]" | sed 's/\[NB_SESSION_VALIDITY://;s/\]//')
+            if [ -n "$VALIDITY" ]; then
+              echo "✅ Found Session Validity: $VALIDITY seconds"
+              echo "SESSION_VALIDITY=$VALIDITY" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️  No validity in tag, will use default: ${{ env.DEFAULT_SESSION_VALIDITY }}"
+            fi
+          else
+            echo "❌ SESSION_ENABLED=false (no markers found)"
+            echo "SESSION_ENABLED=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Display parsed values
+      - name: Display Parsed Configuration
+        run: |
+          echo "╔════════════════════════════════════════════════════════════╗"
+          echo "║            Parsed Session Configuration                   ║"
+          echo "╚════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Tag: ${{ steps.get_version.outputs.TAG_NAME }}"
+          echo "Session Enabled: ${{ steps.get_version.outputs.SESSION_ENABLED }}"
+          echo "Device ID: ${{ steps.get_version.outputs.SESSION_DEVICE_ID || env.DEFAULT_DEVICE_ID }}"
+          echo "Session Validity: ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds"
+          echo ""
+
+      # Test session condition
+      - name: Test Session Start Condition
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true'
+        run: |
+          echo "🚀 Session start condition MET!"
+          echo "   This step would start a NativeBridge session"
+          echo ""
+          echo "Session details:"
+          echo "  Device ID: ${{ steps.get_version.outputs.SESSION_DEVICE_ID || env.DEFAULT_DEVICE_ID }}"
+          echo "  Validity: ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds"
+          echo "  Region: ${{ env.DEFAULT_REGION }}"
+          echo ""
+          echo "✅ Session parsing working correctly!"
+
+      # Test Slack notification condition
+      - name: Test Slack Notification Condition
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true'
+        run: |
+          echo "💬 Slack notification condition MET!"
+          echo "   This step would send a Slack notification"
+          echo ""
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            echo "✅ SLACK_WEBHOOK_URL is configured"
+          else
+            echo "⚠️  SLACK_WEBHOOK_URL not configured (optional)"
+          fi
+
+      # Show what would happen if session was disabled
+      - name: Session Disabled Message
+        if: steps.get_version.outputs.SESSION_ENABLED != 'true'
+        run: |
+          echo "❌ Session start condition NOT met"
+          echo "   Session steps would be skipped"
+          echo ""
+          echo "To enable session, create tag with:"
+          echo "  ./scripts/release.sh X.Y.Z --start-session"
+
+      # Summary
+      - name: Test Summary
+        run: |
+          echo "### 🧪 Session Parsing Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** \`${{ steps.get_version.outputs.TAG_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Session Enabled:** ${{ steps.get_version.outputs.SESSION_ENABLED }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.get_version.outputs.SESSION_ENABLED }}" == "true" ]; then
+            echo "### ✅ Session Configuration Detected" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- **Device ID:** \`${{ steps.get_version.outputs.SESSION_DEVICE_ID || env.DEFAULT_DEVICE_ID }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Validity:** \`${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }}\` seconds" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** \`${{ env.DEFAULT_REGION }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Session would be started in production workflow**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ No Session Configuration" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Session markers not found in tag annotation." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "To enable, run:" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "./scripts/release.sh X.Y.Z --start-session" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
