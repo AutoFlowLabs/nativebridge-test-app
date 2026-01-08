@@ -77,16 +77,24 @@ Arguments:
   version       Version number (e.g., 1.0.0, 2.0.0-beta)
 
 Options:
-  --dry-run         Show what would happen without making changes
-  --force           Skip confirmations
-  -h, --help        Show this help message
+  --dry-run              Show what would happen without making changes
+  --force                Skip confirmations
+  --start-session        Start NativeBridge session after app upload
+  --device-id <id>       NativeBridge device ID (default: 67a642531a4aa535498192f8)
+  --session-validity <s> Session duration in seconds, 30-300 (default: 120)
+  -h, --help             Show this help message
 
 Examples:
   $0 1.0.0
-  $0 1.2.3
-  $0 2.0.0-beta
+  $0 1.2.3 --start-session
+  $0 2.0.0-beta --start-session --device-id abc123 --session-validity 180
   $0 1.0.1 --dry-run
   $0 1.0.0 --force
+
+NativeBridge Session Options:
+  --start-session              Enable automatic session start after upload
+  --device-id <device-id>      Specify device ID (requires --start-session)
+  --session-validity <seconds> Session duration between 30-300 seconds (requires --start-session)
 
 EOF
 }
@@ -197,6 +205,29 @@ check_tag_exists() {
     fi
 }
 
+validate_session_validity() {
+    local validity=$1
+
+    # Check if it's a number
+    if ! [[ "$validity" =~ ^[0-9]+$ ]]; then
+        print_error "Session validity must be a number: $validity"
+        return 1
+    fi
+
+    # Check range
+    if [ "$validity" -lt 30 ]; then
+        print_warning "Session validity too low ($validity seconds), using minimum: 30 seconds"
+        SESSION_VALIDITY=30
+    elif [ "$validity" -gt 300 ]; then
+        print_warning "Session validity too high ($validity seconds), using maximum: 300 seconds"
+        SESSION_VALIDITY=300
+    else
+        SESSION_VALIDITY=$validity
+    fi
+
+    return 0
+}
+
 ################################################################################
 # Version Bump Functions
 ################################################################################
@@ -301,8 +332,8 @@ create_and_push_tag() {
 
     cd "$PROJECT_ROOT"
 
-    # Create annotated tag
-    git tag -a "$tag" -m "Release $tag
+    # Build tag message
+    local tag_message="Release $tag
 
 Version: $version
 Date: $(date '+%Y-%m-%d %H:%M:%S')
@@ -315,7 +346,30 @@ This release includes:
 
 Automated build via GitHub Actions CI/CD pipeline."
 
+    # Add NativeBridge session info if enabled
+    if [[ "$START_SESSION" == true ]]; then
+        tag_message="${tag_message}
+
+NativeBridge Session Configuration:
+- Auto-start session: enabled
+- Device ID: ${DEVICE_ID}
+- Session validity: ${SESSION_VALIDITY} seconds
+
+[NB_SESSION_ENABLED]
+[NB_DEVICE_ID:${DEVICE_ID}]
+[NB_SESSION_VALIDITY:${SESSION_VALIDITY}]"
+    fi
+
+    # Create annotated tag
+    git tag -a "$tag" -m "$tag_message"
+
     print_success "Tag $tag created"
+
+    if [[ "$START_SESSION" == true ]]; then
+        print_info "Session will auto-start with:"
+        print_info "  Device ID: $DEVICE_ID"
+        print_info "  Validity: $SESSION_VALIDITY seconds"
+    fi
 
     # Push commit and tag
     print_step "Pushing to remote"
@@ -363,6 +417,11 @@ perform_release() {
         echo -e "${YELLOW}  Version:      $version${NC}"
         echo -e "${YELLOW}  Tag:          v$version${NC}"
         echo -e "${YELLOW}  Branch:       $CURRENT_BRANCH${NC}"
+        if [[ "$START_SESSION" == true ]]; then
+            echo -e "${YELLOW}  Session:      enabled${NC}"
+            echo -e "${YELLOW}  Device ID:    $DEVICE_ID${NC}"
+            echo -e "${YELLOW}  Validity:     $SESSION_VALIDITY seconds${NC}"
+        fi
         echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
         echo ""
         read -p "Continue with release? (y/n) " -n 1 -r
@@ -380,6 +439,11 @@ perform_release() {
         print_info "Would update Android build.gradle"
         print_info "Would commit changes"
         print_info "Would create and push tag v$version"
+        if [[ "$START_SESSION" == true ]]; then
+            print_info "Would enable NativeBridge session:"
+            print_info "  - Device ID: $DEVICE_ID"
+            print_info "  - Session validity: $SESSION_VALIDITY seconds"
+        fi
         print_info "Would trigger CI/CD pipeline"
         echo ""
         print_success "Dry run completed"
@@ -418,6 +482,9 @@ main() {
     VERSION=""
     DRY_RUN=false
     FORCE=false
+    START_SESSION=false
+    DEVICE_ID="67a642531a4aa535498192f8"  # Default device ID
+    SESSION_VALIDITY=120  # Default 2 minutes
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -432,6 +499,28 @@ main() {
             --force)
                 FORCE=true
                 shift
+                ;;
+            --start-session)
+                START_SESSION=true
+                shift
+                ;;
+            --device-id)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    print_error "--device-id requires a value"
+                    exit 1
+                fi
+                DEVICE_ID="$2"
+                shift 2
+                ;;
+            --session-validity)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    print_error "--session-validity requires a value"
+                    exit 1
+                fi
+                if ! validate_session_validity "$2"; then
+                    exit 1
+                fi
+                shift 2
                 ;;
             -*)
                 print_error "Unknown option: $1"
@@ -450,6 +539,14 @@ main() {
                 ;;
         esac
     done
+
+    # Validate session options
+    if [[ "$DEVICE_ID" != "67a642531a4aa535498192f8" || "$SESSION_VALIDITY" != "120" ]] && [[ "$START_SESSION" != true ]]; then
+        print_warning "--device-id and --session-validity require --start-session to be set"
+        print_info "Session options will be ignored"
+        DEVICE_ID="67a642531a4aa535498192f8"
+        SESSION_VALIDITY=120
+    fi
 
     # Check if version was provided
     if [[ -z "$VERSION" ]]; then

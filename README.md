@@ -118,11 +118,52 @@ adb logcat | grep -E "NativeBridge|Biometric"
 
 ---
 
+## CI/CD & Automated Releases
+
+This project includes a fully automated CI/CD pipeline with NativeBridge integration:
+
+- ✅ **Automated Builds** - Android APK & iOS .app built on every release tag
+- ✅ **NativeBridge Upload** - Apps automatically uploaded to NativeBridge platform
+- ✅ **Auto-Start Sessions** - Optional: Start test sessions on NativeBridge devices
+- ✅ **Slack Notifications** - Get notified when sessions are ready
+- ✅ **GitHub Releases** - Artifacts and session URLs in release notes
+
+### Quick Release
+
+```bash
+# Basic release (no session)
+./scripts/release.sh 1.0.0
+
+# Release with auto-session
+./scripts/release.sh 1.0.0 --start-session
+
+# Custom device and session duration
+./scripts/release.sh 1.0.0 --start-session \
+  --device-id abc123 \
+  --session-validity 180
+```
+
+### Session Parameters
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--start-session` | Auto-start test session | disabled |
+| `--device-id <id>` | Device to use | `67a642531a4aa535498192f8` |
+| `--session-validity <s>` | Duration in seconds (30-300) | `120` |
+
+### Slack Notifications (Optional)
+
+Add `SLACK_WEBHOOK_URL` secret in GitHub to get notified when sessions start.
+
+See [CICD_GUIDE.md](CICD_GUIDE.md) for complete documentation.
+
 ## Documentation
 
+- **[CICD_GUIDE.md](CICD_GUIDE.md)** - Complete CI/CD pipeline documentation
+- **[RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md)** - Automated release guide
 - **SETUP_GUIDE.md** - Complete setup instructions
 - **BIOMETRIC_IMPLEMENTATION.md** - How biometric authentication works
-- **setup.sh** - Automated setup script
+- **BUILD_GUIDE.md** - Manual build instructions
 
 ---
 

@@ -9,6 +9,10 @@ on:
 env:
   NODE_VERSION: '18'
   JAVA_VERSION: '17'
+  # Default values for NativeBridge session
+  DEFAULT_DEVICE_ID: '67a642531a4aa535498192f8'
+  DEFAULT_SESSION_VALIDITY: '120'
+  DEFAULT_REGION: 'ind'
 
 jobs:
   # ============================================================================
@@ -22,6 +26,8 @@ jobs:
       nativebridge_versioned_link: ${{ steps.nativebridge_upload.outputs.versioned_link }}
       nativebridge_version: ${{ steps.nativebridge_upload.outputs.nb_version }}
       nativebridge_app_id: ${{ steps.nativebridge_upload.outputs.app_id }}
+      session_id: ${{ steps.start_session.outputs.session_id }}
+      session_url: ${{ steps.start_session.outputs.session_url }}
 
     steps:
       # Checkout code
@@ -39,6 +45,31 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
+
+          # Parse session configuration from tag message
+          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG_NAME")
+
+          # Check if session is enabled
+          if echo "$TAG_MESSAGE" | grep -q "\[NB_SESSION_ENABLED\]"; then
+            echo "SESSION_ENABLED=true" >> $GITHUB_OUTPUT
+            echo "📱 NativeBridge session enabled in tag"
+
+            # Extract device ID
+            DEVICE_ID=$(echo "$TAG_MESSAGE" | grep -o "\[NB_DEVICE_ID:[^]]*\]" | sed 's/\[NB_DEVICE_ID://;s/\]//')
+            if [ -n "$DEVICE_ID" ]; then
+              echo "SESSION_DEVICE_ID=$DEVICE_ID" >> $GITHUB_OUTPUT
+              echo "   Device ID: $DEVICE_ID"
+            fi
+
+            # Extract session validity
+            VALIDITY=$(echo "$TAG_MESSAGE" | grep -o "\[NB_SESSION_VALIDITY:[^]]*\]" | sed 's/\[NB_SESSION_VALIDITY://;s/\]//')
+            if [ -n "$VALIDITY" ]; then
+              echo "SESSION_VALIDITY=$VALIDITY" >> $GITHUB_OUTPUT
+              echo "   Session validity: $VALIDITY seconds"
+            fi
+          else
+            echo "SESSION_ENABLED=false" >> $GITHUB_OUTPUT
+          fi
 
       # Set up Node.js
       - name: Set up Node.js
@@ -263,6 +294,161 @@ jobs:
             exit 1
           fi
 
+      # Start NativeBridge Session (Optional)
+      - name: Start NativeBridge Session
+        id: start_session
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true'
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+          DEVICE_ID: ${{ steps.get_version.outputs.SESSION_DEVICE_ID || env.DEFAULT_DEVICE_ID }}
+          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }}
+        run: |
+          if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
+            echo "⚠️  NATIVEBRIDGE_API_KEY secret not configured - skipping session start"
+            exit 0
+          fi
+
+          if [ -z "${{ env.NATIVEBRIDGE_APP_ID }}" ]; then
+            echo "⚠️  App ID not available - skipping session start"
+            exit 0
+          fi
+
+          # Validate session validity (must be between 30 and 300 seconds)
+          VALIDITY=$SESSION_VALIDITY
+          if [ "$VALIDITY" -lt 30 ]; then
+            echo "⚠️  Session validity too low ($VALIDITY seconds), using minimum: 30 seconds"
+            VALIDITY=30
+          elif [ "$VALIDITY" -gt 300 ]; then
+            echo "⚠️  Session validity too high ($VALIDITY seconds), using maximum: 300 seconds"
+            VALIDITY=300
+          fi
+
+          echo "🚀 Starting NativeBridge session..."
+          echo "   Device ID: $DEVICE_ID"
+          echo "   App ID: ${{ env.NATIVEBRIDGE_APP_ID }}"
+          echo "   Region: ${{ env.DEFAULT_REGION }}"
+          echo "   Session Validity: $VALIDITY seconds"
+
+          # Start session via NativeBridge API
+          RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/device/session \
+            -H "accept: application/json" \
+            -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"deviceType\": \"android\",
+              \"deviceId\": \"$DEVICE_ID\",
+              \"appId\": \"${{ env.NATIVEBRIDGE_APP_ID }}\",
+              \"region\": \"${{ env.DEFAULT_REGION }}\",
+              \"executionValidity\": $VALIDITY
+            }" \
+            -w "\n%{http_code}" \
+            -s)
+
+          # Extract HTTP status code
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Session started successfully!"
+
+            # Parse response
+            SESSION_ID=$(echo "$BODY" | grep -o '"sessionId":"[^"]*"' | sed 's/"sessionId":"//;s/"//')
+            SESSION_URL=$(echo "$BODY" | grep -o '"sessionUrl":"[^"]*"' | sed 's/"sessionUrl":"//;s/"//')
+            MESSAGE=$(echo "$BODY" | grep -o '"message":"[^"]*"' | sed 's/"message":"//;s/"//')
+
+            echo "📱 Session ID: $SESSION_ID"
+            echo "🔗 Session URL: $SESSION_URL"
+            echo "💬 Message: $MESSAGE"
+
+            # Save to environment
+            echo "SESSION_ID=$SESSION_ID" >> $GITHUB_ENV
+            echo "SESSION_URL=$SESSION_URL" >> $GITHUB_ENV
+
+            # Set outputs
+            echo "session_id=$SESSION_ID" >> $GITHUB_OUTPUT
+            echo "session_url=$SESSION_URL" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Failed to start session (HTTP $HTTP_CODE)"
+            echo "$BODY"
+            # Don't fail the build, just warn
+            echo "⚠️  Continuing without session..."
+          fi
+
+      # Send Slack Notification (Optional)
+      - name: Send Slack Notification
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && env.SESSION_URL != '' && secrets.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+
+          # Create Slack message payload
+          PAYLOAD=$(cat <<EOF
+          {
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "🚀 NativeBridge Session Started",
+                  "emoji": true
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*App Version:*\n$VERSION"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Session ID:*\n${{ env.SESSION_ID }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Device ID:*\n${{ env.DEVICE_ID || env.DEFAULT_DEVICE_ID }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Validity:*\n${{ env.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "🔗 *Session URL:*\n<${{ env.SESSION_URL }}|Launch Session>"
+                }
+              },
+              {
+                "type": "context",
+                "elements": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "Triggered by GitHub Actions • <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow>"
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+          )
+
+          # Send to Slack
+          HTTP_CODE=$(curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            -w "%{http_code}" \
+            -s -o /dev/null)
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Slack notification sent successfully"
+          else
+            echo "⚠️  Failed to send Slack notification (HTTP $HTTP_CODE)"
+          fi
+
       # Output build info
       - name: Build Summary
         run: |
@@ -281,6 +467,17 @@ jobs:
             echo "**NativeBridge Version:** ${{ env.NATIVEBRIDGE_VERSION }}" >> $GITHUB_STEP_SUMMARY
             echo "**Magic Link (Latest):** [${{ env.NATIVEBRIDGE_LINK }}](${{ env.NATIVEBRIDGE_LINK }})" >> $GITHUB_STEP_SUMMARY
             echo "**Versioned Link:** [${{ env.NATIVEBRIDGE_VERSIONED_LINK }}](${{ env.NATIVEBRIDGE_VERSIONED_LINK }})" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Add session info if started
+          if [ -n "${{ env.SESSION_URL }}" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🚀 Active Session ✅" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Session ID:** ${{ env.SESSION_ID }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Session URL:** [${{ env.SESSION_URL }}](${{ env.SESSION_URL }})" >> $GITHUB_STEP_SUMMARY
+            echo "**Device ID:** ${{ env.DEVICE_ID || env.DEFAULT_DEVICE_ID }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Validity:** ${{ env.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds" >> $GITHUB_STEP_SUMMARY
           fi
 
   # ============================================================================
@@ -543,6 +740,19 @@ jobs:
             **☁️ Android: [Launch in NativeBridge Cloud](${{ needs.build-android.outputs.nativebridge_versioned_link }})**
 
             **☁️ iOS: [Launch in NativeBridge Cloud](${{ needs.build-ios.outputs.nativebridge_versioned_link }})**
+
+            ${{ needs.build-android.outputs.session_url && format('### 🎮 Active Session (Android)
+
+            **🔗 [Launch Active Session]({0})**
+
+            - **Session ID:** `{1}`
+            - **Direct access to running app** on NativeBridge device
+            - Session may expire based on configured validity period
+
+            > 💡 This is a live session running on an actual device. Use this for immediate testing!
+
+            ---
+            ', needs.build-android.outputs.session_url, needs.build-android.outputs.session_id) || '' }}
 
             #### What is NativeBridge?
 

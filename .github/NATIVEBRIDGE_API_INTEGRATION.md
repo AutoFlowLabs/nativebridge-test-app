@@ -5,16 +5,17 @@ A comprehensive guide for integrating NativeBridge Application Upload API into a
 ## Table of Contents
 1. [Prerequisites](#prerequisites)
 2. [API Overview](#api-overview)
-3. [GitHub Actions](#github-actions)
-4. [GitLab CI/CD](#gitlab-cicd)
-5. [Jenkins](#jenkins)
-6. [Circle CI](#circleci)
-7. [Bitrise](#bitrise)
-8. [Azure Pipelines](#azure-pipelines)
-9. [Travis CI](#travis-ci)
-10. [Generic Shell Script](#generic-shell-script)
-11. [Best Practices](#best-practices)
-12. [Troubleshooting](#troubleshooting)
+3. [Session API](#session-api)
+4. [GitHub Actions](#github-actions)
+5. [GitLab CI/CD](#gitlab-cicd)
+6. [Jenkins](#jenkins)
+7. [Circle CI](#circleci)
+8. [Bitrise](#bitrise)
+9. [Azure Pipelines](#azure-pipelines)
+10. [Travis CI](#travis-ci)
+11. [Generic Shell Script](#generic-shell-script)
+12. [Best Practices](#best-practices)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -86,6 +87,228 @@ For most use cases, use these parameters:
 | `versionAction` | `create_new_version` | Auto-increment versions |
 | `sendNotification` | `true` | Email notifications enabled |
 | `notificationEmails` | `None` | Use uploader's email (default) |
+
+---
+
+## Session API
+
+### Overview
+
+After uploading your app, you can automatically start a test session on a NativeBridge device using the Session API.
+
+**Endpoint:** `POST /v1/device/session`
+
+**Authentication:** `X-Api-Key` header
+
+**Content-Type:** `application/json`
+
+### Request Parameters
+
+| Parameter | Type | Description | Required | Valid Values |
+|-----------|------|-------------|----------|--------------|
+| `deviceType` | string | Type of device | Yes | `"android"` or `"ios"` |
+| `deviceId` | string | NativeBridge device ID | Yes | Valid device ID |
+| `appId` | string | App ID from upload response | Yes | e.g., `"HgWp"` |
+| `region` | string | Server region | Yes | `"ind"`, `"us"`, etc. |
+| `executionValidity` | number | Session duration in seconds | Yes | 30-300 |
+
+### Example Request
+
+```bash
+curl -X POST https://api.nativebridge.io/v1/device/session \
+  -H "accept: application/json" \
+  -H "X-Api-Key: Nb-c3uo.a1233f7f-b484-4962-a531-3f7a13bab4ae" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deviceType": "android",
+    "deviceId": "67a642531a4aa535498192f8",
+    "appId": "HgWp",
+    "region": "ind",
+    "executionValidity": 120
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "data": {
+    "sessionId": "OXDQ",
+    "message": "Session created successfully",
+    "sessionUrl": "https://nativebridge.io/session/OXDQ"
+  }
+}
+```
+
+### Session Validity Constraints
+
+- **Minimum:** 30 seconds
+- **Maximum:** 300 seconds (5 minutes)
+- **Recommended:** 120 seconds (2 minutes) for standard testing
+
+Values outside this range will be rejected by the API.
+
+### Complete Upload + Session Workflow
+
+Here's a complete example that uploads an app and starts a session:
+
+```bash
+#!/bin/bash
+set -e
+
+API_KEY="${NATIVEBRIDGE_API_KEY}"
+APK_PATH="path/to/app-release.apk"
+DEVICE_ID="67a642531a4aa535498192f8"
+SESSION_VALIDITY=120
+
+# Step 1: Upload APK
+echo "📤 Uploading APK to NativeBridge..."
+
+UPLOAD_RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/application \
+  -H "X-Api-Key: $API_KEY" \
+  -F "file=@$APK_PATH" \
+  -F "accessType=public" \
+  -F "versionAction=create_new_version" \
+  -F "sendNotification=true" \
+  -w "\n%{http_code}" \
+  -s)
+
+HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | tail -n1)
+BODY=$(echo "$UPLOAD_RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" -ne 200 ]; then
+  echo "❌ Upload failed (HTTP $HTTP_CODE)"
+  echo "$BODY"
+  exit 1
+fi
+
+# Extract App ID
+APP_ID=$(echo "$BODY" | grep -o '"id":"[^"]*"' | sed 's/"id":"//;s/"//')
+MAGIC_LINK=$(echo "$BODY" | grep -o '"magicLink":"[^"]*"' | sed 's/"magicLink":"//;s/"//')
+
+echo "✅ Upload successful!"
+echo "   App ID: $APP_ID"
+echo "   Magic Link: $MAGIC_LINK"
+
+# Step 2: Start Session
+echo ""
+echo "🚀 Starting NativeBridge session..."
+
+SESSION_RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/device/session \
+  -H "accept: application/json" \
+  -H "X-Api-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"deviceType\": \"android\",
+    \"deviceId\": \"$DEVICE_ID\",
+    \"appId\": \"$APP_ID\",
+    \"region\": \"ind\",
+    \"executionValidity\": $SESSION_VALIDITY
+  }" \
+  -w "\n%{http_code}" \
+  -s)
+
+HTTP_CODE=$(echo "$SESSION_RESPONSE" | tail -n1)
+BODY=$(echo "$SESSION_RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" -eq 200 ]; then
+  SESSION_ID=$(echo "$BODY" | grep -o '"sessionId":"[^"]*"' | sed 's/"sessionId":"//;s/"//')
+  SESSION_URL=$(echo "$BODY" | grep -o '"sessionUrl":"[^"]*"' | sed 's/"sessionUrl":"//;s/"//')
+
+  echo "✅ Session started successfully!"
+  echo "   Session ID: $SESSION_ID"
+  echo "   Session URL: $SESSION_URL"
+  echo "   Validity: $SESSION_VALIDITY seconds"
+else
+  echo "⚠️  Session start failed (HTTP $HTTP_CODE)"
+  echo "$BODY"
+  echo "   App is still available via magic link"
+fi
+
+echo ""
+echo "🎉 Deployment complete!"
+```
+
+### Validation Logic
+
+Always validate session validity before making the API call:
+
+```bash
+validate_session_validity() {
+  local validity=$1
+
+  if [ "$validity" -lt 30 ]; then
+    echo "⚠️ Session validity too low ($validity), using minimum: 30"
+    validity=30
+  elif [ "$validity" -gt 300 ]; then
+    echo "⚠️ Session validity too high ($validity), using maximum: 300"
+    validity=300
+  fi
+
+  echo "$validity"
+}
+
+# Usage
+SESSION_VALIDITY=$(validate_session_validity $SESSION_VALIDITY)
+```
+
+### Error Handling
+
+Handle session start errors gracefully:
+
+```bash
+if [ "$HTTP_CODE" -eq 200 ]; then
+  # Success - session started
+  echo "✅ Session active"
+elif [ "$HTTP_CODE" -eq 401 ]; then
+  echo "❌ Invalid API key"
+  exit 1
+elif [ "$HTTP_CODE" -eq 404 ]; then
+  echo "❌ Device or app not found"
+  exit 1
+elif [ "$HTTP_CODE" -eq 400 ]; then
+  echo "❌ Invalid parameters (check validity range)"
+  exit 1
+else
+  echo "⚠️ Session start failed - app still available via magic link"
+  # Don't exit - app upload was successful
+fi
+```
+
+### Common Use Cases
+
+#### 1. Automated Testing After Upload
+```bash
+# Upload app → Start session → Run automated tests
+# The session URL can be used for Appium or other testing frameworks
+```
+
+#### 2. QA Team Notification
+```bash
+# After starting session, send notification with session URL
+# QA team can immediately start testing
+```
+
+#### 3. Quick Smoke Tests
+```bash
+# Start short 30-second session for quick verification
+executionValidity=30
+```
+
+#### 4. Extended Manual Testing
+```bash
+# Start 5-minute session for thorough manual testing
+executionValidity=300
+```
+
+### Regional Considerations
+
+Available regions:
+- `"ind"` - India
+- `"us"` - United States
+- Additional regions may be available - check NativeBridge dashboard
+
+Choose the region closest to your testing team for best performance.
 
 ---
 
@@ -165,6 +388,95 @@ jobs:
         run: |
           echo "### 📱 NativeBridge Upload ✅" >> $GITHUB_STEP_SUMMARY
           echo "**Magic Link:** ${{ env.MAGIC_LINK }}" >> $GITHUB_STEP_SUMMARY
+```
+
+### Advanced: Upload with Auto-Session Start
+
+Complete example with app upload + session start + Slack notification:
+
+```yaml
+- name: Upload to NativeBridge and Start Session
+  env:
+    NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+    SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  run: |
+    APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+    DEVICE_ID="67a642531a4aa535498192f8"
+    SESSION_VALIDITY=120
+
+    # Upload APK
+    echo "📤 Uploading to NativeBridge..."
+    UPLOAD_RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/application \
+      -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
+      -F "file=@$APK_PATH" \
+      -F "accessType=public" \
+      -F "versionAction=create_new_version" \
+      -F "sendNotification=true" \
+      -w "\n%{http_code}" \
+      -s)
+
+    HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | tail -n1)
+    BODY=$(echo "$UPLOAD_RESPONSE" | sed '$d')
+
+    if [ "$HTTP_CODE" -ne 200 ]; then
+      echo "❌ Upload failed"
+      exit 1
+    fi
+
+    # Extract app details
+    APP_ID=$(echo "$BODY" | grep -o '"id":"[^"]*"' | sed 's/"id":"//;s/"//')
+    MAGIC_LINK=$(echo "$BODY" | grep -o '"magicLink":"[^"]*"' | sed 's/"magicLink":"//;s/"//')
+
+    echo "✅ Upload successful! App ID: $APP_ID"
+    echo "APP_ID=$APP_ID" >> $GITHUB_ENV
+    echo "MAGIC_LINK=$MAGIC_LINK" >> $GITHUB_ENV
+
+    # Start session
+    echo "🚀 Starting session..."
+    SESSION_RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/device/session \
+      -H "accept: application/json" \
+      -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"deviceType\": \"android\",
+        \"deviceId\": \"$DEVICE_ID\",
+        \"appId\": \"$APP_ID\",
+        \"region\": \"ind\",
+        \"executionValidity\": $SESSION_VALIDITY
+      }" \
+      -w "\n%{http_code}" \
+      -s)
+
+    HTTP_CODE=$(echo "$SESSION_RESPONSE" | tail -n1)
+    BODY=$(echo "$SESSION_RESPONSE" | sed '$d')
+
+    if [ "$HTTP_CODE" -eq 200 ]; then
+      SESSION_URL=$(echo "$BODY" | grep -o '"sessionUrl":"[^"]*"' | sed 's/"sessionUrl":"//;s/"//')
+      echo "✅ Session started: $SESSION_URL"
+      echo "SESSION_URL=$SESSION_URL" >> $GITHUB_ENV
+
+      # Send Slack notification
+      if [ -n "$SLACK_WEBHOOK_URL" ]; then
+        curl -X POST "$SLACK_WEBHOOK_URL" \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"text\": \"🚀 NativeBridge session ready!\",
+            \"blocks\": [{
+              \"type\": \"section\",
+              \"text\": {
+                \"type\": \"mrkdwn\",
+                \"text\": \"*Session URL:* <$SESSION_URL|Launch Session>\"
+              }
+            }]
+          }"
+      fi
+    fi
+
+- name: Add to Release Notes
+  if: success() && env.SESSION_URL != ''
+  run: |
+    echo "### 🎮 Test Session" >> $GITHUB_STEP_SUMMARY
+    echo "**Session URL:** [${{ env.SESSION_URL }}](${{ env.SESSION_URL }})" >> $GITHUB_STEP_SUMMARY
 ```
 
 ### Advanced: Private Access with Allowed Users

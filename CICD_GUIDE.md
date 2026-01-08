@@ -82,9 +82,13 @@ The pipeline will automatically trigger!
 6. Update version in `build.gradle`
 7. Build release APK with Gradle
 8. Rename APK with version number
-9. Upload as artifact
+9. Upload APK as artifact
+10. Upload to NativeBridge Platform
+11. **[NEW]** Start NativeBridge session (if enabled)
+12. **[NEW]** Send Slack notification (if configured)
 
 **Output:** `NativeBridge-v{VERSION}.apk`
+**Additional Outputs:** Session ID and URL (if session started)
 
 ### 2. Build iOS .app
 
@@ -130,6 +134,8 @@ Navigate to: **Repository → Settings → Secrets and variables → Actions**
 | `ANDROID_KEYSTORE_PASSWORD` | Keystore password | `your-secure-password` |
 | `ANDROID_KEY_ALIAS` | Key alias | `nativebridge-production` |
 | `ANDROID_KEY_PASSWORD` | Key password | `your-secure-password` |
+| `NATIVEBRIDGE_API_KEY` | NativeBridge API key for uploads | `Nb-c3uo.a1233f7f-...` |
+| `SLACK_WEBHOOK_URL` | Slack webhook for notifications (optional) | `https://hooks.slack.com/...` |
 
 ### How to Create Keystore Secret
 
@@ -149,6 +155,78 @@ If secrets are NOT configured:
 - ✅ Pipeline will use the local development keystore
 - ✅ Builds will still succeed
 - ⚠️ APK will be signed with development key
+
+## 🎮 NativeBridge Session Configuration
+
+You can automatically start a test session on a NativeBridge device after uploading your Android app using the release script.
+
+### Using the Release Script
+
+The easiest way to enable sessions is through command-line arguments:
+
+```bash
+# Basic release with session
+./scripts/release.sh 1.0.0 --start-session
+
+# Custom device and duration
+./scripts/release.sh 1.0.0 --start-session --device-id abc123 --session-validity 180
+
+# Quick 30-second test session
+./scripts/release.sh 1.0.0 --start-session --session-validity 30
+```
+
+### Available Session Options
+
+| Option | Description | Default | Example |
+|--------|-------------|---------|---------|
+| `--start-session` | Enable session auto-start | disabled | `--start-session` |
+| `--device-id <id>` | NativeBridge device ID | `67a642531a4aa535498192f8` | `--device-id abc123` |
+| `--session-validity <seconds>` | Session duration (30-300) | `120` | `--session-validity 180` |
+
+### How It Works
+
+1. You run the release script with session options
+2. Script embeds session config in git tag message
+3. CI/CD workflow reads config from tag
+4. Session starts automatically after app upload
+5. Session URL added to release notes and summary
+
+### Session Features
+
+When enabled, the pipeline will:
+- ✅ Automatically start a session on NativeBridge device
+- ✅ Generate a direct session URL
+- ✅ Include session info in GitHub Release notes
+- ✅ Send Slack notification (if webhook configured)
+- ✅ Add session URL to build summary
+
+### Session Validity
+
+- **Minimum:** 30 seconds
+- **Maximum:** 300 seconds (5 minutes)
+- **Default:** 120 seconds (2 minutes)
+- Values outside this range will be automatically adjusted to the nearest valid value
+
+### Examples
+
+```bash
+# Standard release with default session (2 minutes)
+./scripts/release.sh 1.0.0 --start-session
+
+# Extended testing session (5 minutes)
+./scripts/release.sh 1.0.1 --start-session --session-validity 300
+
+# Quick smoke test (30 seconds)
+./scripts/release.sh 1.0.2 --start-session --session-validity 30
+
+# Specific device with custom duration
+./scripts/release.sh 1.1.0 --start-session \
+  --device-id 67a642531a4aa535498192f8 \
+  --session-validity 240
+
+# Dry run to see what would happen
+./scripts/release.sh 1.0.0 --start-session --dry-run
+```
 
 ## 📦 Downloading Build Artifacts
 
@@ -416,11 +494,35 @@ Follow [Semantic Versioning](https://semver.org/):
 - [ ] Release notes reviewed
 - [ ] Stakeholders notified
 
+## 🔔 Slack Notifications
+
+Configure Slack notifications to get notified when sessions start.
+
+### Setup Slack Webhook
+
+1. Create a Slack webhook URL:
+   - Go to [Slack API](https://api.slack.com/messaging/webhooks)
+   - Create an incoming webhook for your channel
+   - Copy the webhook URL
+2. Add to GitHub Secrets:
+   - **Name:** `SLACK_WEBHOOK_URL`
+   - **Value:** Your webhook URL (e.g., `https://hooks.slack.com/services/...`)
+
+### Notification Content
+
+When a session starts, you'll receive a Slack message with:
+- 🚀 App version
+- 📱 Session ID and URL
+- 🔧 Device ID
+- ⏱️ Session validity duration
+- 🔗 Direct link to GitHub Actions workflow
+
 ## 📚 Related Documentation
 
 - [BUILD_GUIDE.md](BUILD_GUIDE.md) - Manual build instructions
 - [SECURITY.md](SECURITY.md) - Security best practices
 - [KEYSTORE_INFO.md](KEYSTORE_INFO.md) - Keystore details
+- [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) - Automated releases
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)
 
 ## 🆘 Getting Help
