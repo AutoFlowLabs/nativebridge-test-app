@@ -64,7 +64,9 @@ Welcome to the NativeBridge CI/CD documentation! This directory contains all the
 - 🚀 **One-Click Launch** - No setup, no downloads, just click and test
 - 🌐 **Universal Access** - Works on Windows, Mac, Linux, even mobile browsers
 - 🔗 **Shareable Magic Links** - Send links to anyone for instant testing
+- 🎮 **Auto-Start Sessions** - Automatically start test sessions after upload
 - 📧 **Email Notifications** - Automatic notifications when new versions are uploaded
+- 💬 **Slack Integration** - Get notified in Slack when sessions are ready
 - 🔒 **Access Control** - Public or private apps with user allowlists
 
 ### How It Works
@@ -95,17 +97,38 @@ Welcome to the NativeBridge CI/CD documentation! This directory contains all the
    - **Value:** Your API key from Step 1
 4. Click **Add secret**
 
-### Step 3: Create a Release
+### Step 3: (Optional) Add Slack Webhook
+
+For session notifications:
+
+1. Create a Slack incoming webhook at https://api.slack.com/messaging/webhooks
+2. Go to **Settings** → **Secrets and variables** → **Actions**
+3. Add:
+   - **Name:** `SLACK_WEBHOOK_URL`
+   - **Value:** Your Slack webhook URL
+
+### Step 4: Create a Release
 
 ```bash
+# Basic release
 ./scripts/release.sh 1.0.0
+
+# With auto-start session
+./scripts/release.sh 1.0.0 --start-session
+
+# Custom session settings
+./scripts/release.sh 1.0.0 --start-session \
+  --device-id your-device-id \
+  --session-validity 180
 ```
 
 That's it! The pipeline will:
 - ✅ Build your APK
 - ✅ Upload to NativeBridge
 - ✅ Generate magic link for cloud testing
-- ✅ Create GitHub Release
+- ✅ **[NEW]** Auto-start test session (if `--start-session` used)
+- ✅ **[NEW]** Send Slack notification (if configured)
+- ✅ Create GitHub Release with session URL
 - ✅ Send email notifications
 
 ---
@@ -171,19 +194,27 @@ graph LR
 4. **NativeBridge Upload**
    - Uploads APK via API
    - Parses response
-   - Extracts magic links
+   - Extracts magic links and app ID
    - Saves for later steps
 
-5. **GitHub Release**
+5. **Session Start** (Optional)
+   - Starts test session on NativeBridge device
+   - Uses device ID and validity from tag
+   - Generates session URL
+   - Sends Slack notification (if configured)
+
+6. **GitHub Release**
    - Downloads APK artifact
    - Creates release
    - Includes NativeBridge cloud link
+   - Includes active session URL (if started)
    - Attaches APK file
 
-6. **Notifications**
+7. **Notifications**
    - Email via NativeBridge (if enabled)
+   - Slack via webhook (if session started)
    - GitHub notifications
-   - Build summaries
+   - Build summaries with session info
 
 ---
 
@@ -205,6 +236,12 @@ graph LR
 | `ANDROID_KEY_ALIAS` | No | Key alias in keystore |
 | `ANDROID_KEY_PASSWORD` | No | Key password |
 
+### Optional: Session & Notifications
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `SLACK_WEBHOOK_URL` | No | Slack webhook for session notifications |
+
 > **Note:** If keystore secrets are not provided, the workflow generates a temporary keystore for CI builds.
 
 ---
@@ -218,11 +255,40 @@ graph LR
 ./scripts/release.sh 1.0.0
 ```
 
+### Create Release with Auto-Session
+
+```bash
+# Release with automatic session start (2 min default)
+./scripts/release.sh 1.0.0 --start-session
+
+# Custom session duration (3 minutes)
+./scripts/release.sh 1.0.0 --start-session --session-validity 180
+
+# Specific device with custom duration
+./scripts/release.sh 1.0.0 --start-session \
+  --device-id 67a642531a4aa535498192f8 \
+  --session-validity 240
+
+# Quick 30-second smoke test
+./scripts/release.sh 1.0.0 --start-session --session-validity 30
+```
+
+### Session Parameters
+
+| Parameter | Description | Default | Valid Range |
+|-----------|-------------|---------|-------------|
+| `--start-session` | Enable auto-start session | disabled | - |
+| `--device-id <id>` | NativeBridge device ID | `67a642531a4aa535498192f8` | Any valid ID |
+| `--session-validity <s>` | Session duration (seconds) | `120` | 30-300 |
+
 ### Dry Run (Test Without Pushing)
 
 ```bash
 # See what would happen without actually releasing
 ./scripts/release.sh 1.0.0 --dry-run
+
+# Test with session options
+./scripts/release.sh 1.0.0 --start-session --dry-run
 ```
 
 ### npm Scripts
@@ -377,8 +443,95 @@ cd android && ./gradlew assembleRelease
 
 ---
 
+## 🎮 Auto-Start Session Feature
+
+### Overview
+
+The pipeline can automatically start a test session on a NativeBridge device after uploading your Android app. This is controlled via **command-line parameters** when creating a release.
+
+### How It Works
+
+1. Run release script with `--start-session` flag
+2. Session config is embedded in git tag message
+3. CI/CD workflow parses the config from tag
+4. After APK upload, session API is called
+5. Session URL is generated and included in release
+
+### Usage
+
+```bash
+# Enable session with defaults
+./scripts/release.sh 1.0.0 --start-session
+
+# Customize device and duration
+./scripts/release.sh 1.0.0 --start-session \
+  --device-id your-device-id \
+  --session-validity 180
+```
+
+### Parameters
+
+- `--start-session` - Enable automatic session start
+- `--device-id <id>` - Device ID (default: `67a642531a4aa535498192f8`)
+- `--session-validity <seconds>` - Duration in seconds (default: 120, range: 30-300)
+
+### Session Info Location
+
+When a session is started, you'll find the URL in:
+- ✅ GitHub Actions summary (under "🚀 Active Session")
+- ✅ GitHub Release notes (under "🎮 Active Session")
+- ✅ Slack notification (if webhook configured)
+
+### Slack Notifications
+
+To receive Slack notifications when sessions start:
+
+1. Create webhook at https://api.slack.com/messaging/webhooks
+2. Add `SLACK_WEBHOOK_URL` to GitHub Secrets
+3. Use `--start-session` when creating release
+
+You'll receive a formatted message with:
+- App version and session ID
+- Device ID and validity
+- Clickable session URL
+- Link to GitHub Actions workflow
+
+### Use Cases
+
+**Quick smoke test (30 seconds):**
+```bash
+./scripts/release.sh 1.0.1 --start-session --session-validity 30
+```
+
+**Standard testing (2 minutes):**
+```bash
+./scripts/release.sh 1.0.1 --start-session
+```
+
+**Extended manual testing (5 minutes):**
+```bash
+./scripts/release.sh 1.0.1 --start-session --session-validity 300
+```
+
+**Specific test device:**
+```bash
+./scripts/release.sh 1.0.1 --start-session --device-id abc123
+```
+
+### API Details
+
+The session is created using the NativeBridge Session API:
+- **Endpoint:** `POST /v1/device/session`
+- **Parameters:** deviceType, deviceId, appId, region, executionValidity
+- **Response:** sessionId, sessionUrl
+
+For complete API documentation, see [NATIVEBRIDGE_API_INTEGRATION.md](NATIVEBRIDGE_API_INTEGRATION.md#session-api).
+
+---
+
 ## 🎓 Getting Started Checklist
 
+### Basic Setup
 - [ ] Read [QUICKSTART_CICD.md](../QUICKSTART_CICD.md)
 - [ ] Get NativeBridge API key from https://nativebridge.io/dashboard/api-keys
 - [ ] Add `NATIVEBRIDGE_API_KEY` to GitHub Secrets
@@ -387,6 +540,14 @@ cd android && ./gradlew assembleRelease
 - [ ] Check GitHub Actions for build status
 - [ ] Test magic link in GitHub Release
 - [ ] Share with team!
+
+### Advanced: Auto-Session Setup
+- [ ] (Optional) Create Slack incoming webhook
+- [ ] (Optional) Add `SLACK_WEBHOOK_URL` to GitHub Secrets
+- [ ] Test session with: `./scripts/release.sh 1.0.1 --start-session --dry-run`
+- [ ] Create release with session: `./scripts/release.sh 1.0.1 --start-session`
+- [ ] Check session URL in GitHub Release
+- [ ] Verify Slack notification (if configured)
 
 ---
 
