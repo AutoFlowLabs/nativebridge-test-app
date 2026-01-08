@@ -23,6 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Fetch all history including tag annotations
+          fetch-tags: true  # Explicitly fetch tags
 
       # Extract version and parse session config
       - name: Extract version and session config from tag
