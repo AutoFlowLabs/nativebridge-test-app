@@ -376,10 +376,16 @@ jobs:
 
       # Send Slack Notification (Optional)
       - name: Send Slack Notification
-        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && env.SESSION_URL != '' && secrets.SLACK_WEBHOOK_URL != ''
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && env.SESSION_URL != ''
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
+          # Check if Slack webhook is configured
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "ℹ️  SLACK_WEBHOOK_URL not configured - skipping Slack notification"
+            exit 0
+          fi
+
           VERSION=${{ steps.get_version.outputs.VERSION }}
 
           # Create Slack message payload
