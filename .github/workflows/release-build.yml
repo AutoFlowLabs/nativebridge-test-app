@@ -41,8 +41,8 @@ jobs:
       - name: Fetch tag annotations
         run: |
           TAG_NAME=${GITHUB_REF#refs/tags/}
-          echo "Fetching tag object for: $TAG_NAME"
-          git fetch origin tag "$TAG_NAME" --no-tags
+          echo "Fetching tag annotation for: $TAG_NAME"
+          git fetch --force origin tag "$TAG_NAME" --no-tags
           echo "Tag annotation fetched successfully"
 
       # Extract version from tag
