@@ -82,158 +82,166 @@ jobs:
             echo "SESSION_ENABLED=false" >> $GITHUB_OUTPUT
           fi
 
+      # ========================================================================
+      # NOTE: Android builds are commented out - using pre-built APK instead
+      # ========================================================================
+      #
+      # This workflow uses a PRE-BUILT APK from builds/NativeBridge-Production.apk
+      # to enable instant testing of NativeBridge API integration and session features
+      # without waiting 8-10 minutes for React Native builds.
+      #
+      # WHY USE PRE-BUILT APK?
+      # - Completes in seconds instead of 8-10 minutes
+      # - Minimal CI resource usage
+      # - Perfect for testing NativeBridge upload + session APIs
+      # - Same experience as actual builds for cloud testing
+      #
+      # TO ENABLE ACTUAL ANDROID BUILDS:
+      # 1. Uncomment all steps below (Node.js setup through Build APK)
+      # 2. Comment out the "Use Pre-built APK" step
+      # 3. Ensure you have android/ directory with proper React Native setup
+      # 4. Configure keystore secrets (optional, auto-generates if missing)
+      #
+      # OR: Replace with your own build process
+      # - Add your build steps here
+      # - Ensure final APK is at: release-artifacts/NativeBridge-v${VERSION}.apk
+      # - Update APK_SIZE environment variable
+      # ========================================================================
+
       # Set up Node.js
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+      # - name: Set up Node.js
+      #   uses: actions/setup-node@v4
+      #   with:
+      #     node-version: ${{ env.NODE_VERSION }}
+      #     cache: 'npm'
 
       # Install dependencies
-      - name: Install dependencies
-        run: npm ci
+      # - name: Install dependencies
+      #   run: npm ci
 
       # Set up Java/JDK for Android build
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+      # - name: Set up JDK
+      #   uses: actions/setup-java@v4
+      #   with:
+      #     distribution: 'temurin'
+      #     java-version: ${{ env.JAVA_VERSION }}
 
-      # Generate or decode keystore
-      - name: Setup Android Keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          # Create keystore directory
-          mkdir -p android/app
-
-          # If keystore secret exists, decode it; otherwise generate a new one
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "Using keystore from GitHub Secrets"
-            echo $KEYSTORE_BASE64 | base64 -d > android/app/release.keystore
-            KEYSTORE_FILE="release.keystore"
-            KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD}"
-            KEY_ALIAS="${KEY_ALIAS}"
-            KEY_PASSWORD="${KEY_PASSWORD}"
-          else
-            echo "No keystore secrets found - generating a new keystore for CI"
-            KEYSTORE_FILE="ci-release.keystore"
-            KEYSTORE_PASSWORD="nativebridge2025"
-            KEY_ALIAS="nativebridge-key"
-            KEY_PASSWORD="nativebridge2025"
-
-            # Generate keystore
-            keytool -genkeypair \
-              -v \
-              -storetype PKCS12 \
-              -keystore android/app/$KEYSTORE_FILE \
-              -alias $KEY_ALIAS \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storepass $KEYSTORE_PASSWORD \
-              -keypass $KEY_PASSWORD \
-              -dname "CN=NativeBridge CI, OU=Development, O=NativeBridge, L=City, ST=State, C=US"
-
-            echo "✅ Generated new keystore for CI build"
-          fi
-
-          # Create gradle.properties with signing config
-          cat >> android/gradle.properties << EOF
-
-          # Release signing configuration (from CI/CD)
-          MYAPP_RELEASE_STORE_FILE=$KEYSTORE_FILE
-          MYAPP_RELEASE_KEY_ALIAS=$KEY_ALIAS
-          MYAPP_RELEASE_STORE_PASSWORD=$KEYSTORE_PASSWORD
-          MYAPP_RELEASE_KEY_PASSWORD=$KEY_PASSWORD
-          EOF
-
-          echo "✅ Keystore configured successfully"
-
-      # Update version in build.gradle
-      - name: Update version in build.gradle
-        run: |
-          VERSION=${{ steps.get_version.outputs.VERSION }}
-          # Generate versionCode: 1.0.0 -> 10000, 1.2.3 -> 10203
-          VERSION_CODE=$(echo $VERSION | sed 's/-.*//' | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
-
-          # Update versionCode and versionName in build.gradle
-          sed -i "s/versionCode [0-9]*/versionCode $VERSION_CODE/" android/app/build.gradle
-          sed -i "s/versionName \".*\"/versionName \"$VERSION\"/" android/app/build.gradle
-
-          echo "Updated to versionCode: $VERSION_CODE, versionName: $VERSION"
-
-      # Make gradlew executable
-      - name: Make gradlew executable
-        run: chmod +x android/gradlew
-
-      # Patch React Native Gradle Plugin to disable warnings as errors
-      - name: Patch React Native Gradle Plugin
-        run: |
-          # Find and patch the build.gradle.kts file to force allWarningsAsErrors = false
-          PLUGIN_BUILD_FILE="node_modules/@react-native/gradle-plugin/react-native-gradle-plugin/build.gradle.kts"
-
-          if [ -f "$PLUGIN_BUILD_FILE" ]; then
-            echo "Patching React Native Gradle Plugin build configuration..."
-
-            # Force allWarningsAsErrors to false using sed
-            sed -i 's/allWarningsAsErrors = true/allWarningsAsErrors = false/g' "$PLUGIN_BUILD_FILE"
-
-            # Also add it if missing - insert before the closing brace of kotlinOptions
-            if ! grep -q "allWarningsAsErrors" "$PLUGIN_BUILD_FILE"; then
-              sed -i '/kotlinOptions {/a\    allWarningsAsErrors = false' "$PLUGIN_BUILD_FILE"
-            fi
-
-            echo "Patched successfully"
-            grep -A 5 "kotlinOptions" "$PLUGIN_BUILD_FILE" || true
-          fi
-
-      # Add Gradle property to disable Kotlin warnings as errors globally
-      - name: Configure Gradle Properties for CI
-        run: |
-          cat >> android/gradle.properties << 'EOF'
-
-          # CI: Disable Kotlin warnings as errors
-          kotlin.allWarningsAsErrors=false
-          kotlin.suppressWarnings=true
-
-          # Gradle performance settings for CI
-          org.gradle.daemon=false
-          org.gradle.parallel=true
-          org.gradle.caching=true
-          org.gradle.configureondemand=true
-          EOF
-
-      # Build Android Release APK
-      - name: Build Android Release APK
-        run: |
-          cd android
-
-          # Clean first
-          ./gradlew clean
-
-          # Build release APK with Kotlin compiler args to suppress warnings
-          ./gradlew assembleRelease \
-            --stacktrace \
-            -Dkotlin.compiler.execution.strategy=in-process \
-            -Pkotlin.allWarningsAsErrors=false
-
-      # Rename APK with version
-      - name: Rename APK with version
+      # ========================================================================
+      # Use Pre-built APK (for testing NativeBridge API)
+      # ========================================================================
+      - name: Use Pre-built APK
         run: |
           VERSION=${{ steps.get_version.outputs.VERSION }}
           mkdir -p release-artifacts
-          cp android/app/build/outputs/apk/release/app-release.apk \
+
+          # Copy pre-built APK
+          cp android/prebuilt/NativeBridge-Production.apk \
              release-artifacts/NativeBridge-v${VERSION}.apk
 
           # Get file size
           FILE_SIZE=$(ls -lh release-artifacts/NativeBridge-v${VERSION}.apk | awk '{print $5}')
-          echo "APK Size: $FILE_SIZE"
+          echo "✅ Using pre-built APK: $FILE_SIZE"
           echo "APK_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+
+      # ========================================================================
+      # COMMENTED OUT: Actual Android Build Steps
+      # Uncomment below to enable real React Native builds
+      # ========================================================================
+
+      # # Generate or decode keystore
+      # - name: Setup Android Keystore
+      #   env:
+      #     KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      #     KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      #     KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      #     KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      #   run: |
+      #     mkdir -p android/app
+      #     if [ -n "$KEYSTORE_BASE64" ]; then
+      #       echo "Using keystore from GitHub Secrets"
+      #       echo $KEYSTORE_BASE64 | base64 -d > android/app/release.keystore
+      #       KEYSTORE_FILE="release.keystore"
+      #       KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD}"
+      #       KEY_ALIAS="${KEY_ALIAS}"
+      #       KEY_PASSWORD="${KEY_PASSWORD}"
+      #     else
+      #       echo "No keystore secrets found - generating a new keystore for CI"
+      #       KEYSTORE_FILE="ci-release.keystore"
+      #       KEYSTORE_PASSWORD="nativebridge2025"
+      #       KEY_ALIAS="nativebridge-key"
+      #       KEY_PASSWORD="nativebridge2025"
+      #       keytool -genkeypair -v -storetype PKCS12 \
+      #         -keystore android/app/$KEYSTORE_FILE \
+      #         -alias $KEY_ALIAS -keyalg RSA -keysize 2048 \
+      #         -validity 10000 \
+      #         -storepass $KEYSTORE_PASSWORD \
+      #         -keypass $KEY_PASSWORD \
+      #         -dname "CN=NativeBridge CI, OU=Development, O=NativeBridge, L=City, ST=State, C=US"
+      #       echo "✅ Generated new keystore for CI build"
+      #     fi
+      #     cat >> android/gradle.properties << EOF
+      #     MYAPP_RELEASE_STORE_FILE=$KEYSTORE_FILE
+      #     MYAPP_RELEASE_KEY_ALIAS=$KEY_ALIAS
+      #     MYAPP_RELEASE_STORE_PASSWORD=$KEYSTORE_PASSWORD
+      #     MYAPP_RELEASE_KEY_PASSWORD=$KEY_PASSWORD
+      #     EOF
+      #     echo "✅ Keystore configured successfully"
+
+      # # Update version in build.gradle
+      # - name: Update version in build.gradle
+      #   run: |
+      #     VERSION=${{ steps.get_version.outputs.VERSION }}
+      #     VERSION_CODE=$(echo $VERSION | sed 's/-.*//' | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
+      #     sed -i "s/versionCode [0-9]*/versionCode $VERSION_CODE/" android/app/build.gradle
+      #     sed -i "s/versionName \".*\"/versionName \"$VERSION\"/" android/app/build.gradle
+      #     echo "Updated to versionCode: $VERSION_CODE, versionName: $VERSION"
+
+      # # Make gradlew executable
+      # - name: Make gradlew executable
+      #   run: chmod +x android/gradlew
+
+      # # Patch React Native Gradle Plugin
+      # - name: Patch React Native Gradle Plugin
+      #   run: |
+      #     PLUGIN_BUILD_FILE="node_modules/@react-native/gradle-plugin/react-native-gradle-plugin/build.gradle.kts"
+      #     if [ -f "$PLUGIN_BUILD_FILE" ]; then
+      #       sed -i 's/allWarningsAsErrors = true/allWarningsAsErrors = false/g' "$PLUGIN_BUILD_FILE"
+      #       if ! grep -q "allWarningsAsErrors" "$PLUGIN_BUILD_FILE"; then
+      #         sed -i '/kotlinOptions {/a\    allWarningsAsErrors = false' "$PLUGIN_BUILD_FILE"
+      #       fi
+      #     fi
+
+      # # Configure Gradle Properties for CI
+      # - name: Configure Gradle Properties for CI
+      #   run: |
+      #     cat >> android/gradle.properties << 'EOF'
+      #     kotlin.allWarningsAsErrors=false
+      #     kotlin.suppressWarnings=true
+      #     org.gradle.daemon=false
+      #     org.gradle.parallel=true
+      #     org.gradle.caching=true
+      #     org.gradle.configureondemand=true
+      #     EOF
+
+      # # Build Android Release APK
+      # - name: Build Android Release APK
+      #   run: |
+      #     cd android
+      #     ./gradlew clean
+      #     ./gradlew assembleRelease --stacktrace \
+      #       -Dkotlin.compiler.execution.strategy=in-process \
+      #       -Pkotlin.allWarningsAsErrors=false
+
+      # # Rename APK with version
+      # - name: Rename APK with version
+      #   run: |
+      #     VERSION=${{ steps.get_version.outputs.VERSION }}
+      #     mkdir -p release-artifacts
+      #     cp android/app/build/outputs/apk/release/app-release.apk \
+      #        release-artifacts/NativeBridge-v${VERSION}.apk
+      #     FILE_SIZE=$(ls -lh release-artifacts/NativeBridge-v${VERSION}.apk | awk '{print $5}')
+      #     echo "APK Size: $FILE_SIZE"
+      #     echo "APK_SIZE=$FILE_SIZE" >> $GITHUB_ENV
 
       # Upload APK as artifact
       - name: Upload Android APK
