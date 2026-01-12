@@ -73,39 +73,55 @@ The pipeline will automatically trigger!
 
 **Runner:** `ubuntu-latest`
 
+**⚡ Current Mode: Using PRE-BUILT APK (for fast testing)**
+
 **Steps:**
 1. Checkout code
-2. Extract version from tag
-3. Setup Node.js and install dependencies
-4. Setup JDK for Android build
-5. Configure keystore (from secrets or local)
-6. Update version in `build.gradle`
-7. Build release APK with Gradle
-8. Rename APK with version number
-9. Upload APK as artifact
-10. Upload to NativeBridge Platform
-11. **[NEW]** Start NativeBridge session (if enabled)
-12. **[NEW]** Send Slack notification (if configured)
+2. Fetch tag annotations
+3. Extract version and parse session config from tag
+4. **Use pre-built APK** from `android/prebuilt/` (~30 seconds)
+5. Upload APK as artifact
+6. Upload to NativeBridge Platform
+7. **[NEW]** Start NativeBridge session (if enabled)
+8. **[NEW]** Send Slack notification (if configured)
 
 **Output:** `NativeBridge-v{VERSION}.apk`
 **Additional Outputs:** Session ID and URL (if session started)
+**Build Time:** ~30-40 seconds (vs 8-10 minutes with actual build)
+
+> **Note:** The workflow uses a pre-built APK to enable fast testing of NativeBridge API integration and session features. This allows you to test the complete upload + session flow without waiting for React Native builds.
+
+**To Enable Actual React Native Builds:**
+1. Open [.github/workflows/release-build.yml](.github/workflows/release-build.yml)
+2. Comment out the "Use Pre-built APK" step (line ~132)
+3. Uncomment all build steps (Node.js setup through Build APK)
+4. The build will then take 8-10 minutes but use your latest code
 
 ### 2. Build iOS .app
 
 **Runner:** `macos-latest`
 
+**⚡ Current Mode: Using PRE-BUILT .app.zip (for fast testing)**
+
 **Steps:**
 1. Checkout code
-2. Extract version from tag
-3. Setup Node.js and install dependencies
-4. Install CocoaPods dependencies
-5. Setup Xcode (latest stable)
-6. Update iOS version
-7. Build .app for simulator
-8. Zip the .app directory
-9. Upload as artifact
+2. Fetch tag annotations
+3. Extract version from tag
+4. **Use pre-built .app.zip** from `ios/prebuilt/` (~5 seconds)
+5. Upload to NativeBridge Platform
+6. Upload as artifact
 
 **Output:** `NativeBridge-iOS-v{VERSION}.app.zip`
+**Build Time:** ~10-15 seconds (vs 10+ minutes with actual build)
+
+> **Note:** iOS builds in CI/CD are extremely resource-intensive. This workflow uses a pre-built .app.zip to avoid timeouts and resource exhaustion while still providing full NativeBridge cloud testing capabilities.
+
+**To Enable Actual iOS Builds:**
+1. Open [.github/workflows/release-build.yml](.github/workflows/release-build.yml)
+2. Find the iOS job section (around line ~500)
+3. Uncomment the actual build steps
+4. Comment out the pre-built .app step
+5. Builds will take 10+ minutes and may fail due to CI resource limits
 
 ### 3. Create GitHub Release
 
