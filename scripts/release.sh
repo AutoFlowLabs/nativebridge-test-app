@@ -74,27 +74,46 @@ show_usage() {
 Usage: $0 <version> [options]
 
 Arguments:
-  version       Version number (e.g., 1.0.0, 2.0.0-beta)
+  version       Version number (e.g., 1.0.0, 2.0.0)
 
 Options:
   --dry-run              Show what would happen without making changes
   --force                Skip confirmations
-  --start-session        Start NativeBridge session after app upload
-  --device-id <id>       NativeBridge device ID (default: 67a642531a4aa535498192f8)
+  --beta                 Build BOTH production and beta variants
+  --start-session        Start NativeBridge session after app upload (production)
+  --device-id <id>       Production device ID (default: 67a642531a4aa535498192f8)
+  --beta-device-id <id>  Beta device ID (requires --beta, default: same as production)
   --session-validity <s> Session duration in seconds, 30-300 (default: 120)
   -h, --help             Show this help message
 
 Examples:
+  # Production only
   $0 1.0.0
   $0 1.2.3 --start-session
-  $0 2.0.0-beta --start-session --device-id abc123 --session-validity 180
+  $0 1.0.0 --start-session --device-id abc123 --session-validity 180
+
+  # Production + Beta (both uploaded, both sessions)
+  $0 1.2.3 --beta --start-session
+  $0 1.2.3 --beta --start-session --device-id prod123 --beta-device-id beta456
+  $0 1.2.3 --beta --start-session --session-validity 240
+
+  # Other
   $0 1.0.1 --dry-run
   $0 1.0.0 --force
 
+Beta Build Behavior:
+  When --beta is specified:
+  - Production: Version X.Y.Z uploaded to NativeBridge
+  - Beta: Version X.Y.Z-beta uploaded to NativeBridge
+  - Both get separate magic links
+  - Sessions start on different devices (if --start-session)
+  - Both sessions notified in Slack (if configured)
+
 NativeBridge Session Options:
   --start-session              Enable automatic session start after upload
-  --device-id <device-id>      Specify device ID (requires --start-session)
-  --session-validity <seconds> Session duration between 30-300 seconds (requires --start-session)
+  --device-id <device-id>      Production device ID (requires --start-session)
+  --beta-device-id <device-id> Beta device ID (requires --beta and --start-session)
+  --session-validity <seconds> Session duration for both builds (30-300 seconds)
 
 EOF
 }
@@ -340,11 +359,37 @@ Date: $(date '+%Y-%m-%d %H:%M:%S')
 Branch: $(git branch --show-current)
 Commit: $(git rev-parse --short HEAD)
 
-This release includes:
+This release includes:"
+
+    # Add production build info
+    if [[ "$BUILD_BETA" == true ]]; then
+        tag_message="${tag_message}
+- Production APK: NativeBridge-v${version}.apk
+- Beta APK: NativeBridge-v${version}-beta.apk
+- Production iOS: NativeBridge-iOS-v${version}.app.zip
+- Beta iOS: NativeBridge-iOS-v${version}-beta.app.zip"
+    else
+        tag_message="${tag_message}
 - Android APK: NativeBridge-v${version}.apk
-- iOS .app: NativeBridge-iOS-v${version}.app.zip
+- iOS .app: NativeBridge-iOS-v${version}.app.zip"
+    fi
+
+    tag_message="${tag_message}
 
 Automated build via GitHub Actions CI/CD pipeline."
+
+    # Add beta build marker if enabled
+    if [[ "$BUILD_BETA" == true ]]; then
+        tag_message="${tag_message}
+
+Beta Build Configuration:
+- Beta builds enabled: YES
+- Beta version suffix: -beta
+- Beta device ID: ${BETA_DEVICE_ID}
+
+[NB_BETA_ENABLED]
+[NB_BETA_DEVICE_ID:${BETA_DEVICE_ID}]"
+    fi
 
     # Add NativeBridge session info if enabled
     if [[ "$START_SESSION" == true ]]; then
@@ -352,7 +397,7 @@ Automated build via GitHub Actions CI/CD pipeline."
 
 NativeBridge Session Configuration:
 - Auto-start session: enabled
-- Device ID: ${DEVICE_ID}
+- Production device ID: ${DEVICE_ID}
 - Session validity: ${SESSION_VALIDITY} seconds
 
 [NB_SESSION_ENABLED]
@@ -365,9 +410,21 @@ NativeBridge Session Configuration:
 
     print_success "Tag $tag created"
 
+    if [[ "$BUILD_BETA" == true ]]; then
+        print_info "Beta build enabled:"
+        print_info "  Production version: $version"
+        print_info "  Beta version: $version-beta"
+        if [[ "$START_SESSION" == true ]]; then
+            print_info "  Both variants will have separate sessions"
+        fi
+    fi
+
     if [[ "$START_SESSION" == true ]]; then
         print_info "Session will auto-start with:"
-        print_info "  Device ID: $DEVICE_ID"
+        print_info "  Production Device ID: $DEVICE_ID"
+        if [[ "$BUILD_BETA" == true ]]; then
+            print_info "  Beta Device ID: $BETA_DEVICE_ID"
+        fi
         print_info "  Validity: $SESSION_VALIDITY seconds"
     fi
 
@@ -380,7 +437,11 @@ NativeBridge Session Configuration:
     git push origin "$tag"
     print_success "Pushed tag $tag"
 
-    print_info "GitHub Actions will now build the release"
+    if [[ "$BUILD_BETA" == true ]]; then
+        print_info "GitHub Actions will now build BOTH production and beta variants"
+    else
+        print_info "GitHub Actions will now build the release"
+    fi
 }
 
 ################################################################################
@@ -417,9 +478,16 @@ perform_release() {
         echo -e "${YELLOW}  Version:      $version${NC}"
         echo -e "${YELLOW}  Tag:          v$version${NC}"
         echo -e "${YELLOW}  Branch:       $CURRENT_BRANCH${NC}"
+        if [[ "$BUILD_BETA" == true ]]; then
+            echo -e "${YELLOW}  Beta Build:   enabled${NC}"
+            echo -e "${YELLOW}  Beta Version: $version-beta${NC}"
+        fi
         if [[ "$START_SESSION" == true ]]; then
             echo -e "${YELLOW}  Session:      enabled${NC}"
-            echo -e "${YELLOW}  Device ID:    $DEVICE_ID${NC}"
+            echo -e "${YELLOW}  Prod Device:  $DEVICE_ID${NC}"
+            if [[ "$BUILD_BETA" == true ]]; then
+                echo -e "${YELLOW}  Beta Device:  $BETA_DEVICE_ID${NC}"
+            fi
             echo -e "${YELLOW}  Validity:     $SESSION_VALIDITY seconds${NC}"
         fi
         echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
@@ -439,9 +507,18 @@ perform_release() {
         print_info "Would update Android build.gradle"
         print_info "Would commit changes"
         print_info "Would create and push tag v$version"
+        if [[ "$BUILD_BETA" == true ]]; then
+            print_info "Would build beta variant:"
+            print_info "  - Production version: $version"
+            print_info "  - Beta version: $version-beta"
+            print_info "  - Both uploaded to NativeBridge"
+        fi
         if [[ "$START_SESSION" == true ]]; then
             print_info "Would enable NativeBridge session:"
-            print_info "  - Device ID: $DEVICE_ID"
+            print_info "  - Production Device ID: $DEVICE_ID"
+            if [[ "$BUILD_BETA" == true ]]; then
+                print_info "  - Beta Device ID: $BETA_DEVICE_ID"
+            fi
             print_info "  - Session validity: $SESSION_VALIDITY seconds"
         fi
         print_info "Would trigger CI/CD pipeline"
@@ -482,8 +559,10 @@ main() {
     VERSION=""
     DRY_RUN=false
     FORCE=false
+    BUILD_BETA=false
     START_SESSION=false
-    DEVICE_ID="67a642531a4aa535498192f8"  # Default device ID
+    DEVICE_ID="67a642531a4aa535498192f8"  # Default production device ID
+    BETA_DEVICE_ID=""  # Default: same as production if not specified
     SESSION_VALIDITY=120  # Default 2 minutes
 
     while [[ $# -gt 0 ]]; do
@@ -500,6 +579,10 @@ main() {
                 FORCE=true
                 shift
                 ;;
+            --beta)
+                BUILD_BETA=true
+                shift
+                ;;
             --start-session)
                 START_SESSION=true
                 shift
@@ -510,6 +593,14 @@ main() {
                     exit 1
                 fi
                 DEVICE_ID="$2"
+                shift 2
+                ;;
+            --beta-device-id)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    print_error "--beta-device-id requires a value"
+                    exit 1
+                fi
+                BETA_DEVICE_ID="$2"
                 shift 2
                 ;;
             --session-validity)
@@ -540,12 +631,25 @@ main() {
         esac
     done
 
+    # Set beta device ID default (same as production if not specified)
+    if [[ -z "$BETA_DEVICE_ID" ]]; then
+        BETA_DEVICE_ID="$DEVICE_ID"
+    fi
+
+    # Validate beta options
+    if [[ "$BETA_DEVICE_ID" != "$DEVICE_ID" ]] && [[ "$BUILD_BETA" != true ]]; then
+        print_warning "--beta-device-id requires --beta to be set"
+        print_info "Beta device ID will be ignored"
+        BETA_DEVICE_ID="$DEVICE_ID"
+    fi
+
     # Validate session options
     if [[ "$DEVICE_ID" != "67a642531a4aa535498192f8" || "$SESSION_VALIDITY" != "120" ]] && [[ "$START_SESSION" != true ]]; then
         print_warning "--device-id and --session-validity require --start-session to be set"
         print_info "Session options will be ignored"
         DEVICE_ID="67a642531a4aa535498192f8"
         SESSION_VALIDITY=120
+        BETA_DEVICE_ID="$DEVICE_ID"
     fi
 
     # Check if version was provided

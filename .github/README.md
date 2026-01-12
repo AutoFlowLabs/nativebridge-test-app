@@ -529,6 +529,192 @@ For complete API documentation, see [NATIVEBRIDGE_API_INTEGRATION.md](NATIVEBRID
 
 ---
 
+## 🧪 Beta Build Feature
+
+### Overview
+
+The pipeline supports building **two variants simultaneously** - production and beta builds. This allows you to:
+- Upload both production and beta apps to NativeBridge in a single trigger
+- Start sessions on TWO different devices (one for prod, one for beta)
+- Test both variants in parallel
+- Get separate magic links and session URLs for each variant
+
+### How It Works
+
+1. Run release script with `--beta` flag
+2. Beta configuration is embedded in git tag message
+3. CI/CD workflow builds/copies BOTH variants:
+   - Production: `NativeBridge-v1.0.0.apk`
+   - Beta: `NativeBridge-v1.0.0-beta.apk`
+4. Both APKs are uploaded to NativeBridge
+5. Sessions are started on separate devices (if `--start-session` is used)
+6. Both variants are included in GitHub Release
+
+### Usage
+
+```bash
+# Basic beta + production build
+./scripts/release.sh 1.0.0 --beta
+
+# Beta build with sessions on both devices
+./scripts/release.sh 1.0.0 --beta --start-session \
+  --device-id prod-device-id \
+  --beta-device-id beta-device-id
+
+# Beta with custom session duration
+./scripts/release.sh 1.0.0 --beta --start-session \
+  --device-id prod-device-id \
+  --beta-device-id beta-device-id \
+  --session-validity 180
+```
+
+### Parameters
+
+- `--beta` - Enable beta build (builds both production and beta)
+- `--beta-device-id <id>` - Device ID for beta session (defaults to production device ID)
+
+### Pre-built APK Approach
+
+**Important:** This workflow uses **pre-built APKs** instead of building from source. This approach:
+- ✅ Completes in ~30 seconds (vs 8-10 minutes for actual builds)
+- ✅ Enables fast testing of NativeBridge integration
+- ✅ Avoids CI resource exhaustion
+- ✅ Still provides full cloud testing capabilities
+
+**Pre-built APK Locations:**
+- Production: `builds/NativeBridge-Production.apk`
+- Beta: `builds/NativeBridge-Beta.apk`
+
+### Building Your Own Beta Variant
+
+To create a beta variant APK with a different package name:
+
+```bash
+# 1. Update package name in android/app/build.gradle
+android {
+    defaultConfig {
+        applicationId "com.yourapp.beta"  // Different from production
+    }
+}
+
+# 2. Build the APK
+cd android && ./gradlew assembleRelease
+
+# 3. Copy to builds folder
+cp app/build/outputs/apk/release/app-release.apk \
+   ../../builds/NativeBridge-Beta.apk
+
+# 4. Commit the pre-built APK
+git add ../../builds/NativeBridge-Beta.apk
+git commit -m "Update pre-built beta APK"
+```
+
+### Building Multiple Variants with Gradle
+
+For actual multi-variant builds, use Product Flavors:
+
+```gradle
+android {
+    flavorDimensions "version"
+    productFlavors {
+        production {
+            dimension "version"
+            applicationId "com.yourapp"
+            versionNameSuffix ""
+        }
+        beta {
+            dimension "version"
+            applicationId "com.yourapp.beta"
+            versionNameSuffix "-beta"
+        }
+    }
+}
+```
+
+Build both:
+```bash
+# Build production
+./gradlew assembleProductionRelease
+
+# Build beta
+./gradlew assembleBetaRelease
+
+# Copy to builds folder
+cp app/build/outputs/apk/production/release/app-production-release.apk \
+   ../../builds/NativeBridge-Production.apk
+cp app/build/outputs/apk/beta/release/app-beta-release.apk \
+   ../../builds/NativeBridge-Beta.apk
+```
+
+### What Gets Created
+
+When you use `--beta`, the pipeline creates:
+
+**Artifacts:**
+- `NativeBridge-v1.0.0.apk` - Production APK
+- `NativeBridge-v1.0.0-beta.apk` - Beta APK
+- `NativeBridge-iOS-v1.0.0.app.zip` - iOS app (unchanged)
+
+**NativeBridge Uploads:**
+- Production app with magic link and versioned link
+- Beta app with separate magic link and versioned link
+
+**Sessions** (if `--start-session` used):
+- Production session on production device
+- Beta session on beta device (or same device if `--beta-device-id` not specified)
+
+**Slack Notifications** (if configured):
+- Production session notification
+- Beta session notification (separate message)
+
+### Use Cases
+
+**Testing new features before production:**
+```bash
+# Beta includes experimental features, production is stable
+./scripts/release.sh 1.5.0 --beta --start-session \
+  --device-id stable-device \
+  --beta-device-id test-device
+```
+
+**Different backend environments:**
+```bash
+# Production points to prod API, beta points to staging API
+./scripts/release.sh 2.0.0 --beta --start-session
+```
+
+**QA testing multiple versions:**
+```bash
+# QA can test both versions simultaneously
+./scripts/release.sh 1.2.3 --beta --start-session \
+  --session-validity 300
+```
+
+### Where to Find Beta Links
+
+After release, you'll find beta variant info in:
+
+**GitHub Release Notes:**
+- "🧪 Android (Beta): Launch Beta in NativeBridge Cloud" link
+- "🧪 Active Session - Beta" section with session URL
+- Download link for `NativeBridge-v1.0.0-beta.apk`
+
+**GitHub Actions Summary:**
+- "🧪 NativeBridge Upload - Beta" section
+- "🧪 Active Session - Beta" section
+
+**Slack Notification:**
+- Separate "🧪 NativeBridge Beta Session Started" message
+
+### Backward Compatibility
+
+The beta feature is **fully backward compatible**:
+- Without `--beta` flag, only production build is created (works exactly as before)
+- Existing releases continue to work without changes
+- Beta is opt-in via command-line flag
+
+---
+
 ## 🎓 Getting Started Checklist
 
 ### Basic Setup
@@ -549,8 +735,18 @@ For complete API documentation, see [NATIVEBRIDGE_API_INTEGRATION.md](NATIVEBRID
 - [ ] Check session URL in GitHub Release
 - [ ] Verify Slack notification (if configured)
 
+### Advanced: Beta Build Setup
+- [ ] Build your beta variant APK with different package name
+- [ ] Save beta APK to `builds/NativeBridge-Beta.apk`
+- [ ] Commit the pre-built beta APK to repository
+- [ ] Test beta build: `./scripts/release.sh 1.0.2 --beta --dry-run`
+- [ ] Create release with beta: `./scripts/release.sh 1.0.2 --beta`
+- [ ] Verify both APKs in GitHub Release
+- [ ] Test both magic links (production and beta)
+- [ ] (Optional) Test with sessions: `./scripts/release.sh 1.0.3 --beta --start-session --beta-device-id <id>`
+
 ---
 
-**Last Updated:** 2025-11-29
+**Last Updated:** 2026-01-13
 **Version:** 1.0
 **Workflow File:** `workflows/release-build.yml`

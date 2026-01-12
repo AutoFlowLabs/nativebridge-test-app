@@ -83,6 +83,20 @@ android {
         versionName "1.2.3"
         missingDimensionStrategy 'react-native-camera', 'general'
     }
+
+    flavorDimensions "version"
+    productFlavors {
+        production {
+            dimension "version"
+            applicationId "com.nativebridge.io"
+            versionNameSuffix ""
+        }
+        beta {
+            dimension "version"
+            applicationId "com.nativebridge.io.beta"
+            versionNameSuffix "-beta"
+        }
+    }
     signingConfigs {
         debug {
             storeFile file('debug.keystore')

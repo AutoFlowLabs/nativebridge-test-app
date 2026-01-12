@@ -28,6 +28,13 @@ jobs:
       nativebridge_app_id: ${{ steps.nativebridge_upload.outputs.app_id }}
       session_id: ${{ steps.start_session.outputs.session_id }}
       session_url: ${{ steps.start_session.outputs.session_url }}
+      # Beta variant outputs
+      beta_nativebridge_link: ${{ steps.nativebridge_upload_beta.outputs.magic_link }}
+      beta_nativebridge_versioned_link: ${{ steps.nativebridge_upload_beta.outputs.versioned_link }}
+      beta_nativebridge_version: ${{ steps.nativebridge_upload_beta.outputs.nb_version }}
+      beta_nativebridge_app_id: ${{ steps.nativebridge_upload_beta.outputs.app_id }}
+      beta_session_id: ${{ steps.start_session_beta.outputs.session_id }}
+      beta_session_url: ${{ steps.start_session_beta.outputs.session_url }}
 
     steps:
       # Checkout code
@@ -82,6 +89,21 @@ jobs:
             echo "SESSION_ENABLED=false" >> $GITHUB_OUTPUT
           fi
 
+          # Check if beta build is enabled
+          if echo "$TAG_MESSAGE" | grep -q "\[NB_BETA_ENABLED\]"; then
+            echo "BETA_ENABLED=true" >> $GITHUB_OUTPUT
+            echo "🧪 Beta build enabled in tag"
+
+            # Extract beta device ID
+            BETA_DEVICE_ID=$(echo "$TAG_MESSAGE" | grep -o "\[NB_BETA_DEVICE_ID:[^]]*\]" | sed 's/\[NB_BETA_DEVICE_ID://;s/\]//')
+            if [ -n "$BETA_DEVICE_ID" ]; then
+              echo "BETA_DEVICE_ID=$BETA_DEVICE_ID" >> $GITHUB_OUTPUT
+              echo "   Beta Device ID: $BETA_DEVICE_ID"
+            fi
+          else
+            echo "BETA_ENABLED=false" >> $GITHUB_OUTPUT
+          fi
+
       # ========================================================================
       # NOTE: Android builds are commented out - using pre-built APK instead
       # ========================================================================
@@ -129,19 +151,42 @@ jobs:
       # ========================================================================
       # Use Pre-built APK (for testing NativeBridge API)
       # ========================================================================
-      - name: Use Pre-built APK
+      - name: Use Pre-built Production APK
         run: |
           VERSION=${{ steps.get_version.outputs.VERSION }}
           mkdir -p release-artifacts
 
-          # Copy pre-built APK
-          cp android/prebuilt/NativeBridge-Production.apk \
+          # Copy pre-built production APK
+          cp builds/NativeBridge-Production.apk \
              release-artifacts/NativeBridge-v${VERSION}.apk
 
           # Get file size
           FILE_SIZE=$(ls -lh release-artifacts/NativeBridge-v${VERSION}.apk | awk '{print $5}')
-          echo "✅ Using pre-built APK: $FILE_SIZE"
+          echo "✅ Using pre-built production APK: $FILE_SIZE"
           echo "APK_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+
+      # Use Pre-built Beta APK (conditional)
+      - name: Use Pre-built Beta APK
+        if: steps.get_version.outputs.BETA_ENABLED == 'true'
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+
+          # Check if pre-built beta APK exists
+          if [ ! -f "builds/NativeBridge-Beta.apk" ]; then
+            echo "❌ Pre-built beta APK not found at builds/NativeBridge-Beta.apk"
+            echo "Please add a beta variant APK to enable beta builds."
+            echo "See documentation for instructions on building beta variants."
+            exit 1
+          fi
+
+          # Copy pre-built beta APK with -beta suffix
+          cp builds/NativeBridge-Beta.apk \
+             release-artifacts/NativeBridge-v${VERSION}-beta.apk
+
+          # Get file size
+          BETA_FILE_SIZE=$(ls -lh release-artifacts/NativeBridge-v${VERSION}-beta.apk | awk '{print $5}')
+          echo "✅ Using pre-built beta APK: $BETA_FILE_SIZE"
+          echo "BETA_APK_SIZE=$BETA_FILE_SIZE" >> $GITHUB_ENV
 
       # ========================================================================
       # COMMENTED OUT: Actual Android Build Steps
@@ -251,6 +296,15 @@ jobs:
           path: release-artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}.apk
           retention-days: 90
 
+      # Upload Beta APK as artifact (conditional)
+      - name: Upload Beta Android APK
+        if: steps.get_version.outputs.BETA_ENABLED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: NativeBridge-Android-Beta-v${{ steps.get_version.outputs.VERSION }}
+          path: release-artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}-beta.apk
+          retention-days: 90
+
       # Upload to NativeBridge Platform
       - name: Upload APK to NativeBridge
         id: nativebridge_upload
@@ -311,6 +365,69 @@ jobs:
             echo "❌ Failed to upload to NativeBridge (HTTP $HTTP_CODE)"
             echo "$BODY"
             exit 1
+          fi
+
+      # Upload Beta APK to NativeBridge (Optional)
+      - name: Upload Beta APK to NativeBridge
+        id: nativebridge_upload_beta
+        if: steps.get_version.outputs.BETA_ENABLED == 'true'
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          APK_PATH="release-artifacts/NativeBridge-v${VERSION}-beta.apk"
+
+          if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
+            echo "⚠️  NATIVEBRIDGE_API_KEY secret not configured - skipping beta upload"
+            exit 0
+          fi
+
+          echo "📤 Uploading Beta APK to NativeBridge..."
+
+          # Upload to NativeBridge API
+          RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/application \
+            -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
+            -F "file=@$APK_PATH" \
+            -F "accessType=public" \
+            -F "versionAction=create_new_version" \
+            -F "sendNotification=true" \
+            -w "\n%{http_code}" \
+            -s)
+
+          # Extract HTTP status code
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Successfully uploaded beta variant to NativeBridge!"
+
+            # Parse response
+            MAGIC_LINK=$(echo "$BODY" | grep -o '"magicLink":"[^"]*"' | sed 's/"magicLink":"//;s/"//')
+            VERSIONED_LINK=$(echo "$BODY" | grep -o '"versionedMagicLink":"[^"]*"' | sed 's/"versionedMagicLink":"//;s/"//')
+            NB_VERSION=$(echo "$BODY" | grep -o '"version":"[^"]*"' | sed 's/"version":"//;s/"//')
+            APP_ID=$(echo "$BODY" | grep -o '"id":"[^"]*"' | sed 's/"id":"//;s/"//')
+
+            echo "📱 Beta App ID: $APP_ID"
+            echo "🔢 NativeBridge Version: $NB_VERSION"
+            echo "🔗 Magic Link (Latest): $MAGIC_LINK"
+            echo "🔗 Versioned Link: $VERSIONED_LINK"
+
+            # Save to environment for later steps
+            echo "BETA_NATIVEBRIDGE_LINK=$MAGIC_LINK" >> $GITHUB_ENV
+            echo "BETA_NATIVEBRIDGE_VERSIONED_LINK=$VERSIONED_LINK" >> $GITHUB_ENV
+            echo "BETA_NATIVEBRIDGE_VERSION=$NB_VERSION" >> $GITHUB_ENV
+            echo "BETA_NATIVEBRIDGE_APP_ID=$APP_ID" >> $GITHUB_ENV
+
+            # Set outputs for create-release job
+            echo "magic_link=$MAGIC_LINK" >> $GITHUB_OUTPUT
+            echo "versioned_link=$VERSIONED_LINK" >> $GITHUB_OUTPUT
+            echo "nb_version=$NB_VERSION" >> $GITHUB_OUTPUT
+            echo "app_id=$APP_ID" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Failed to upload beta to NativeBridge (HTTP $HTTP_CODE)"
+            echo "$BODY"
+            # Don't fail the build, just warn
+            echo "⚠️  Continuing without beta upload..."
           fi
 
       # Start NativeBridge Session (Optional)
@@ -391,6 +508,86 @@ jobs:
             echo "$BODY"
             # Don't fail the build, just warn
             echo "⚠️  Continuing without session..."
+          fi
+
+      # Start NativeBridge Beta Session (Optional)
+      - name: Start NativeBridge Beta Session
+        id: start_session_beta
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && steps.get_version.outputs.BETA_ENABLED == 'true'
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+          BETA_DEVICE_ID: ${{ steps.get_version.outputs.BETA_DEVICE_ID || steps.get_version.outputs.SESSION_DEVICE_ID || env.DEFAULT_DEVICE_ID }}
+          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }}
+        run: |
+          if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
+            echo "⚠️  NATIVEBRIDGE_API_KEY secret not configured - skipping beta session start"
+            exit 0
+          fi
+
+          if [ -z "${{ env.BETA_NATIVEBRIDGE_APP_ID }}" ]; then
+            echo "⚠️  Beta App ID not available - skipping beta session start"
+            exit 0
+          fi
+
+          # Validate session validity (must be between 30 and 300 seconds)
+          VALIDITY=$SESSION_VALIDITY
+          if [ "$VALIDITY" -lt 30 ]; then
+            echo "⚠️  Session validity too low ($VALIDITY seconds), using minimum: 30 seconds"
+            VALIDITY=30
+          elif [ "$VALIDITY" -gt 300 ]; then
+            echo "⚠️  Session validity too high ($VALIDITY seconds), using maximum: 300 seconds"
+            VALIDITY=300
+          fi
+
+          echo "🚀 Starting NativeBridge Beta session..."
+          echo "   Beta Device ID: $BETA_DEVICE_ID"
+          echo "   Beta App ID: ${{ env.BETA_NATIVEBRIDGE_APP_ID }}"
+          echo "   Region: ${{ env.DEFAULT_REGION }}"
+          echo "   Session Validity: $VALIDITY seconds"
+
+          # Start beta session via NativeBridge API
+          RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/device/session \
+            -H "accept: application/json" \
+            -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"deviceType\": \"android\",
+              \"deviceId\": \"$BETA_DEVICE_ID\",
+              \"appId\": \"${{ env.BETA_NATIVEBRIDGE_APP_ID }}\",
+              \"region\": \"${{ env.DEFAULT_REGION }}\",
+              \"executionValidity\": $VALIDITY
+            }" \
+            -w "\n%{http_code}" \
+            -s)
+
+          # Extract HTTP status code
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Beta session started successfully!"
+
+            # Parse response
+            SESSION_ID=$(echo "$BODY" | grep -o '"sessionId":"[^"]*"' | sed 's/"sessionId":"//;s/"//')
+            SESSION_URL=$(echo "$BODY" | grep -o '"sessionUrl":"[^"]*"' | sed 's/"sessionUrl":"//;s/"//')
+            MESSAGE=$(echo "$BODY" | grep -o '"message":"[^"]*"' | sed 's/"message":"//;s/"//')
+
+            echo "📱 Beta Session ID: $SESSION_ID"
+            echo "🔗 Beta Session URL: $SESSION_URL"
+            echo "💬 Message: $MESSAGE"
+
+            # Save to environment
+            echo "BETA_SESSION_ID=$SESSION_ID" >> $GITHUB_ENV
+            echo "BETA_SESSION_URL=$SESSION_URL" >> $GITHUB_ENV
+
+            # Set outputs
+            echo "session_id=$SESSION_ID" >> $GITHUB_OUTPUT
+            echo "session_url=$SESSION_URL" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Failed to start beta session (HTTP $HTTP_CODE)"
+            echo "$BODY"
+            # Don't fail the build, just warn
+            echo "⚠️  Continuing without beta session..."
           fi
 
       # Send Slack Notification (Optional)
@@ -474,19 +671,108 @@ jobs:
             echo "⚠️  Failed to send Slack notification (HTTP $HTTP_CODE)"
           fi
 
+      # Send Beta Slack Notification (Optional)
+      - name: Send Beta Slack Notification
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && steps.get_version.outputs.BETA_ENABLED == 'true' && env.BETA_SESSION_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          # Check if Slack webhook is configured
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "ℹ️  SLACK_WEBHOOK_URL not configured - skipping beta Slack notification"
+            exit 0
+          fi
+
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+
+          # Create Slack message payload for beta
+          PAYLOAD=$(cat <<EOF
+          {
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "🧪 NativeBridge Beta Session Started",
+                  "emoji": true
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*App Version:*\n$VERSION-beta"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Session ID:*\n${{ env.BETA_SESSION_ID }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Device ID:*\n${{ env.BETA_DEVICE_ID || env.DEFAULT_DEVICE_ID }}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Validity:*\n${{ env.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "🔗 *Beta Session URL:*\n<${{ env.BETA_SESSION_URL }}|Launch Beta Session>"
+                }
+              },
+              {
+                "type": "context",
+                "elements": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "Triggered by GitHub Actions • <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow>"
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+          )
+
+          # Send to Slack
+          HTTP_CODE=$(curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            -w "%{http_code}" \
+            -s -o /dev/null)
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Beta Slack notification sent successfully"
+          else
+            echo "⚠️  Failed to send beta Slack notification (HTTP $HTTP_CODE)"
+          fi
+
       # Output build info
       - name: Build Summary
         run: |
           echo "### Android Build Complete ✅" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** ${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Production Version:** ${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
           echo "**APK:** NativeBridge-v${{ steps.get_version.outputs.VERSION }}.apk" >> $GITHUB_STEP_SUMMARY
           echo "**Size:** ${{ env.APK_SIZE }}" >> $GITHUB_STEP_SUMMARY
+
+          # Add beta build info if enabled
+          if [ "${{ steps.get_version.outputs.BETA_ENABLED }}" == "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Beta Version:** ${{ steps.get_version.outputs.VERSION }}-beta" >> $GITHUB_STEP_SUMMARY
+            echo "**Beta APK:** NativeBridge-v${{ steps.get_version.outputs.VERSION }}-beta.apk" >> $GITHUB_STEP_SUMMARY
+            echo "**Beta Size:** ${{ env.BETA_APK_SIZE }}" >> $GITHUB_STEP_SUMMARY
+          fi
 
           # Add NativeBridge info if uploaded
           if [ -n "${{ env.NATIVEBRIDGE_LINK }}" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 📱 NativeBridge Upload ✅" >> $GITHUB_STEP_SUMMARY
+            echo "### 📱 NativeBridge Upload - Production ✅" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**App ID:** ${{ env.NATIVEBRIDGE_APP_ID }}" >> $GITHUB_STEP_SUMMARY
             echo "**NativeBridge Version:** ${{ env.NATIVEBRIDGE_VERSION }}" >> $GITHUB_STEP_SUMMARY
@@ -494,14 +780,36 @@ jobs:
             echo "**Versioned Link:** [${{ env.NATIVEBRIDGE_VERSIONED_LINK }}](${{ env.NATIVEBRIDGE_VERSIONED_LINK }})" >> $GITHUB_STEP_SUMMARY
           fi
 
-          # Add session info if started
+          # Add beta NativeBridge info if uploaded
+          if [ -n "${{ env.BETA_NATIVEBRIDGE_LINK }}" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🧪 NativeBridge Upload - Beta ✅" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Beta App ID:** ${{ env.BETA_NATIVEBRIDGE_APP_ID }}" >> $GITHUB_STEP_SUMMARY
+            echo "**NativeBridge Version:** ${{ env.BETA_NATIVEBRIDGE_VERSION }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Magic Link (Latest):** [${{ env.BETA_NATIVEBRIDGE_LINK }}](${{ env.BETA_NATIVEBRIDGE_LINK }})" >> $GITHUB_STEP_SUMMARY
+            echo "**Versioned Link:** [${{ env.BETA_NATIVEBRIDGE_VERSIONED_LINK }}](${{ env.BETA_NATIVEBRIDGE_VERSIONED_LINK }})" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Add production session info if started
           if [ -n "${{ env.SESSION_URL }}" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🚀 Active Session ✅" >> $GITHUB_STEP_SUMMARY
+            echo "### 🚀 Active Session - Production ✅" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Session ID:** ${{ env.SESSION_ID }}" >> $GITHUB_STEP_SUMMARY
             echo "**Session URL:** [${{ env.SESSION_URL }}](${{ env.SESSION_URL }})" >> $GITHUB_STEP_SUMMARY
             echo "**Device ID:** ${{ env.DEVICE_ID || env.DEFAULT_DEVICE_ID }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Validity:** ${{ env.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Add beta session info if started
+          if [ -n "${{ env.BETA_SESSION_URL }}" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🧪 Active Session - Beta ✅" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Beta Session ID:** ${{ env.BETA_SESSION_ID }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Beta Session URL:** [${{ env.BETA_SESSION_URL }}](${{ env.BETA_SESSION_URL }})" >> $GITHUB_STEP_SUMMARY
+            echo "**Beta Device ID:** ${{ env.BETA_DEVICE_ID || env.DEFAULT_DEVICE_ID }}" >> $GITHUB_STEP_SUMMARY
             echo "**Validity:** ${{ env.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds" >> $GITHUB_STEP_SUMMARY
           fi
 
@@ -747,6 +1055,14 @@ jobs:
           name: NativeBridge-Android-v${{ steps.get_version.outputs.VERSION }}
           path: artifacts/
 
+      # Download Beta Android artifact (conditional - don't fail if not exists)
+      - name: Download Beta Android APK
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: NativeBridge-Android-Beta-v${{ steps.get_version.outputs.VERSION }}
+          path: artifacts/
+
       # Download iOS artifact
       - name: Download iOS .app.zip
         uses: actions/download-artifact@v4
@@ -768,13 +1084,15 @@ jobs:
 
             **Run this app instantly in the cloud** - No installation required!
 
-            **☁️ Android: [Launch in NativeBridge Cloud](${{ needs.build-android.outputs.nativebridge_versioned_link }})**
+            **☁️ Android (Production): [Launch in NativeBridge Cloud](${{ needs.build-android.outputs.nativebridge_versioned_link }})**
 
-            **☁️ iOS: [Launch in NativeBridge Cloud](${{ needs.build-ios.outputs.nativebridge_versioned_link }})**
+            ${{ needs.build-android.outputs.beta_nativebridge_versioned_link && format('**🧪 Android (Beta): [Launch Beta in NativeBridge Cloud]({0})**
 
-            ${{ needs.build-android.outputs.session_url && format('### 🎮 Active Session (Android)
+            ', needs.build-android.outputs.beta_nativebridge_versioned_link) || '' }}**☁️ iOS: [Launch in NativeBridge Cloud](${{ needs.build-ios.outputs.nativebridge_versioned_link }})**
 
-            **🔗 [Launch Active Session]({0})**
+            ${{ needs.build-android.outputs.session_url && format('### 🎮 Active Session - Production (Android)
+
+            **🔗 [Launch Production Session]({0})**
 
             - **Session ID:** `{1}`
             - **Direct access to running app** on NativeBridge device
@@ -783,7 +1101,18 @@ jobs:
             > 💡 This is a live session running on an actual device. Use this for immediate testing!
 
             ---
-            ', needs.build-android.outputs.session_url, needs.build-android.outputs.session_id) || '' }}
+            ', needs.build-android.outputs.session_url, needs.build-android.outputs.session_id) || '' }}${{ needs.build-android.outputs.beta_session_url && format('### 🧪 Active Session - Beta (Android)
+
+            **🔗 [Launch Beta Session]({0})**
+
+            - **Session ID:** `{1}`
+            - **Direct access to running beta app** on NativeBridge device
+            - Session may expire based on configured validity period
+
+            > 💡 This is a live beta session running on a separate device. Use this for testing beta features!
+
+            ---
+            ', needs.build-android.outputs.beta_session_url, needs.build-android.outputs.beta_session_id) || '' }}
 
             #### What is NativeBridge?
 
@@ -819,8 +1148,9 @@ jobs:
             ### 📦 Manual Downloads
 
             **Download from GitHub:**
-            - `NativeBridge-v${{ steps.get_version.outputs.VERSION }}.apk` - Android APK for devices and emulators
-            - `NativeBridge-iOS-v${{ steps.get_version.outputs.VERSION }}.app.zip` - iOS Simulator app
+            - `NativeBridge-v${{ steps.get_version.outputs.VERSION }}.apk` - Android Production APK for devices and emulators
+            ${{ needs.build-android.outputs.beta_nativebridge_link && format('- `NativeBridge-v{0}-beta.apk` - Android Beta APK with beta features
+            ', steps.get_version.outputs.VERSION) || '' }}- `NativeBridge-iOS-v${{ steps.get_version.outputs.VERSION }}.app.zip` - iOS Simulator app
 
             ### 📝 Installation Methods
 
@@ -849,13 +1179,19 @@ jobs:
 
             ### 🔗 NativeBridge Links
 
-            **Android:**
+            **Android (Production):**
             - **Latest Version:** [${{ needs.build-android.outputs.nativebridge_link }}](${{ needs.build-android.outputs.nativebridge_link }}) (always points to newest version)
             - **This Version (v${{ steps.get_version.outputs.VERSION }}):** [${{ needs.build-android.outputs.nativebridge_versioned_link }}](${{ needs.build-android.outputs.nativebridge_versioned_link }}) (permanent link)
             - **App ID:** `${{ needs.build-android.outputs.nativebridge_app_id }}`
             - **NativeBridge Version:** `${{ needs.build-android.outputs.nativebridge_version }}`
 
-            **iOS:**
+            ${{ needs.build-android.outputs.beta_nativebridge_link && format('**Android (Beta):**
+            - **Latest Version:** [{0}]({0}) (always points to newest version)
+            - **This Version (v{1}-beta):** [{2}]({2}) (permanent link)
+            - **App ID:** `{3}`
+            - **NativeBridge Version:** `{4}`
+
+            ', needs.build-android.outputs.beta_nativebridge_link, steps.get_version.outputs.VERSION, needs.build-android.outputs.beta_nativebridge_versioned_link, needs.build-android.outputs.beta_nativebridge_app_id, needs.build-android.outputs.beta_nativebridge_version) || '' }}**iOS:**
             - **Latest Version:** [${{ needs.build-ios.outputs.nativebridge_link }}](${{ needs.build-ios.outputs.nativebridge_link }}) (always points to newest version)
             - **This Version (v${{ steps.get_version.outputs.VERSION }}):** [${{ needs.build-ios.outputs.nativebridge_versioned_link }}](${{ needs.build-ios.outputs.nativebridge_versioned_link }}) (permanent link)
             - **App ID:** `${{ needs.build-ios.outputs.nativebridge_app_id }}`
@@ -883,6 +1219,7 @@ jobs:
             **For detailed build instructions, see [BUILD_GUIDE.md](https://github.com/${{ github.repository }}/blob/main/BUILD_GUIDE.md)**
           files: |
             artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}.apk
+            artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}-beta.apk
             artifacts/NativeBridge-iOS-v${{ steps.get_version.outputs.VERSION }}.app.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
