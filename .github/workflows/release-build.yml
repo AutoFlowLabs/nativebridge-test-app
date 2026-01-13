@@ -524,58 +524,64 @@ jobs:
               if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
                 echo "📤 Sending Slack notification for this session..."
 
-                PAYLOAD=$(cat <<EOF
-                {
-                  "blocks": [
-                    {
-                      "type": "header",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "🚀 Production Session Started [$((i+1))/${#DEVICES[@]}]",
-                        "emoji": true
-                      }
-                    },
-                    {
-                      "type": "section",
-                      "fields": [
-                        {
-                          "type": "mrkdwn",
-                          "text": "*App Version:*\n${{ steps.get_version.outputs.VERSION }}"
-                        },
-                        {
-                          "type": "mrkdwn",
-                          "text": "*Device:*\n\`${DEVICE_ID}\`"
-                        },
-                        {
-                          "type": "mrkdwn",
-                          "text": "*Session ID:*\n\`${SESSION_ID}\`"
-                        },
-                        {
-                          "type": "mrkdwn",
-                          "text": "*Validity:*\n${VALIDITY} seconds"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "section",
-                      "text": {
-                        "type": "mrkdwn",
-                        "text": "🔗 *Session URL:*\n<${SESSION_URL}|Launch Session Now>"
-                      }
-                    },
-                    {
-                      "type": "context",
-                      "elements": [
-                        {
-                          "type": "mrkdwn",
-                          "text": "Triggered by GitHub Actions • <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow>"
-                        }
-                      ]
-                    }
-                  ]
-                }
-                EOF
-                )
+                VERSION="${{ steps.get_version.outputs.VERSION }}"
+                REPO="${{ github.repository }}"
+                RUN_ID="${{ github.run_id }}"
+                SESSION_NUM=$((i+1))
+                TOTAL_SESSIONS=${#DEVICES[@]}
+
+                PAYLOAD=$(cat <<SLACKEOF
+{
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "🚀 Production Session Started [${SESSION_NUM}/${TOTAL_SESSIONS}]",
+        "emoji": true
+      }
+    },
+    {
+      "type": "section",
+      "fields": [
+        {
+          "type": "mrkdwn",
+          "text": "*App Version:*\n${VERSION}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Device:*\n\\\`${DEVICE_ID}\\\`"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Session ID:*\n\\\`${SESSION_ID}\\\`"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Validity:*\n${VALIDITY} seconds"
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🔗 *Session URL:*\n<${SESSION_URL}|Launch Session Now>"
+      }
+    },
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "Triggered by GitHub Actions • <https://github.com/${REPO}/actions/runs/${RUN_ID}|View Workflow>"
+        }
+      ]
+    }
+  ]
+}
+SLACKEOF
+)
 
                 SLACK_HTTP_CODE=$(curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
                   -H "Content-Type: application/json" \
@@ -702,58 +708,64 @@ jobs:
               if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
                 echo "📤 Sending Slack notification for this beta session..."
 
-                PAYLOAD=$(cat <<EOF
-                {
-                  "blocks": [
-                    {
-                      "type": "header",
-                      "text": {
-                        "type": "plain_text",
-                        "text": "🧪 Beta Session Started [$((i+1))/${#DEVICES[@]}]",
-                        "emoji": true
-                      }
-                    },
-                    {
-                      "type": "section",
-                      "fields": [
-                        {
-                          "type": "mrkdwn",
-                          "text": "*App Version:*\n${{ steps.get_version.outputs.VERSION }}-beta"
-                        },
-                        {
-                          "type": "mrkdwn",
-                          "text": "*Device:*\n\`${DEVICE_ID}\`"
-                        },
-                        {
-                          "type": "mrkdwn",
-                          "text": "*Session ID:*\n\`${SESSION_ID}\`"
-                        },
-                        {
-                          "type": "mrkdwn",
-                          "text": "*Validity:*\n${VALIDITY} seconds"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "section",
-                      "text": {
-                        "type": "mrkdwn",
-                        "text": "🔗 *Beta Session URL:*\n<${SESSION_URL}|Launch Beta Session Now>"
-                      }
-                    },
-                    {
-                      "type": "context",
-                      "elements": [
-                        {
-                          "type": "mrkdwn",
-                          "text": "Triggered by GitHub Actions • <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow>"
-                        }
-                      ]
-                    }
-                  ]
-                }
-                EOF
-                )
+                VERSION="${{ steps.get_version.outputs.VERSION }}"
+                REPO="${{ github.repository }}"
+                RUN_ID="${{ github.run_id }}"
+                SESSION_NUM=$((i+1))
+                TOTAL_SESSIONS=${#DEVICES[@]}
+
+                PAYLOAD=$(cat <<SLACKEOF
+{
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "🧪 Beta Session Started [${SESSION_NUM}/${TOTAL_SESSIONS}]",
+        "emoji": true
+      }
+    },
+    {
+      "type": "section",
+      "fields": [
+        {
+          "type": "mrkdwn",
+          "text": "*App Version:*\n${VERSION}-beta"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Device:*\n\\\`${DEVICE_ID}\\\`"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Session ID:*\n\\\`${SESSION_ID}\\\`"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Validity:*\n${VALIDITY} seconds"
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🔗 *Beta Session URL:*\n<${SESSION_URL}|Launch Beta Session Now>"
+      }
+    },
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "Triggered by GitHub Actions • <https://github.com/${REPO}/actions/runs/${RUN_ID}|View Workflow>"
+        }
+      ]
+    }
+  ]
+}
+SLACKEOF
+)
 
                 SLACK_HTTP_CODE=$(curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
                   -H "Content-Type: application/json" \
