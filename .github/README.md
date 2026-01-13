@@ -447,7 +447,11 @@ cd android && ./gradlew assembleRelease
 
 ### Overview
 
-The pipeline can automatically start a test session on a NativeBridge device after uploading your Android app. This is controlled via **command-line parameters** when creating a release.
+The pipeline can automatically start test sessions on **one or more NativeBridge devices** after uploading your Android app. This is controlled via **command-line parameters** when creating a release.
+
+**New in v1.3.0**: Support for **multiple sessions** on different devices using comma-separated device IDs.
+
+> 💡 **Need Device IDs?** See [How to Get Device IDs](#how-to-get-device-ids) section below to find available devices using the NativeBridge API.
 
 ### How It Works
 
@@ -472,8 +476,17 @@ The pipeline can automatically start a test session on a NativeBridge device aft
 ### Parameters
 
 - `--start-session` - Enable automatic session start
-- `--device-id <id>` - Device ID (default: `67a642531a4aa535498192f8`)
+- `--device-id <ids>` - Device ID(s) - single or comma-separated for multiple (default: `67a642531a4aa535498192f8`)
 - `--session-validity <seconds>` - Duration in seconds (default: 120, range: 30-300)
+
+**Examples:**
+```bash
+# Single device
+--device-id 682dba7233c7787633294734
+
+# Multiple devices (starts 3 sessions)
+--device-id 682dba7233c7787633294734,685bf304ec144f98463c221d,69581275499de2e1a23c44f9
+```
 
 ### Session Info Location
 
@@ -591,6 +604,161 @@ The pipeline supports building **two variants simultaneously** - production and 
 - QA team: parallel testing on different devices
 - Region testing: different device configurations
 - Performance comparison across devices
+
+### How to Get Device IDs
+
+To find available devices for testing, use the NativeBridge Devices API:
+
+**API Endpoint:**
+```bash
+curl -X 'GET' \
+  'https://api.nativebridge.io/v1/devices?device_type=android&emulated=false' \
+  -H 'accept: application/json' \
+  -H 'X-Api-Key: YOUR_API_KEY'
+```
+
+**Response Example:**
+```json
+{
+  "data": [
+    {
+      "id": "682dba7233c7787633294734",
+      "type": "android",
+      "osVersion": "14",
+      "modelName": "Samsung Galaxy S22 Ultra",
+      "isEmulator": false,
+      "deviceOwner": "shared",
+      "userPlan": "all"
+    },
+    {
+      "id": "685bf304ec144f98463c221d",
+      "type": "android",
+      "osVersion": "13",
+      "modelName": "Pixel 5",
+      "isEmulator": false,
+      "deviceOwner": "shared",
+      "userPlan": "free"
+    },
+    {
+      "id": "68d153469457da61a16488b9",
+      "type": "android",
+      "osVersion": "15",
+      "modelName": "Motorola G05",
+      "isEmulator": false,
+      "deviceOwner": "aspora.com",
+      "userPlan": "free"
+    },
+    {
+      "id": "69581275499de2e1a23c44f9",
+      "type": "android",
+      "osVersion": "14",
+      "modelName": "Xiaomi Poco C75",
+      "isEmulator": false,
+      "deviceOwner": "shared",
+      "userPlan": "free"
+    },
+    {
+      "id": "695a9249f6a40ebd23e29565",
+      "type": "android",
+      "osVersion": "13",
+      "modelName": "Realme 3 Pro",
+      "isEmulator": false,
+      "deviceOwner": "shared",
+      "userPlan": "free"
+    }
+  ]
+}
+```
+
+**Understanding the Response Fields:**
+
+- `id` - **Device ID** (use this in `--device-id` parameter)
+- `type` - Device platform (`android` or `ios`)
+- `osVersion` - Operating system version (e.g., "13", "14", "15")
+- `modelName` - Device model (e.g., "Samsung Galaxy S22 Ultra", "Pixel 5")
+- `isEmulator` - `true` for virtual devices, `false` for real physical devices
+- `deviceOwner` - **Important:**
+  - `"shared"` - Public device available to all users
+  - `"aspora.com"`, `"example.com"`, etc. - **Dedicated device** reserved for specific organization (uses domain part of company email)
+- `userPlan` - Access level (`"free"`, `"all"`, etc.)
+
+**Query Parameters:**
+- `device_type` - Filter by device type (`android` or `ios`)
+- `emulated` - Filter by emulator status (`true` for emulators, `false` for real devices)
+
+**How to Use Device IDs:**
+
+1. **List available devices:**
+   ```bash
+   curl -X GET 'https://api.nativebridge.io/v1/devices?device_type=android&emulated=false' \
+     -H 'X-Api-Key: YOUR_API_KEY'
+   ```
+
+2. **Copy device IDs from the response** (the `id` field)
+
+3. **Use them in your release:**
+   ```bash
+   # Single device
+   ./scripts/release.sh 1.0.0 --start-session \
+     --device-id 682dba7233c7787633294734
+
+   # Multiple devices (comma-separated)
+   ./scripts/release.sh 1.0.0 --start-session \
+     --device-id 682dba7233c7787633294734,685bf304ec144f98463c221d,69581275499de2e1a23c44f9
+   ```
+
+**Selecting Devices by Criteria:**
+
+- **Test on different Android versions:**
+  - Android 15: `68d153469457da61a16488b9` (Motorola G05) - **Dedicated to aspora.com**
+  - Android 14: `682dba7233c7787633294734` (Samsung S22 Ultra) - Shared
+  - Android 13: `685bf304ec144f98463c221d` (Pixel 5) - Shared
+
+- **Test on different manufacturers:**
+  - Samsung: `682dba7233c7787633294734` (Shared)
+  - Google Pixel: `685bf304ec144f98463c221d` (Shared)
+  - Motorola: `68d153469457da61a16488b9` (Dedicated to aspora.com)
+  - Xiaomi: `69581275499de2e1a23c44f9` (Shared)
+  - Realme: `695a9249f6a40ebd23e29565` (Shared)
+
+- **Device Ownership:**
+  - **Shared Devices** (`deviceOwner: "shared"`): Available to all users, may have queue times
+  - **Dedicated Devices** (`deviceOwner: "aspora.com"`, `"yourcompany.com"`, etc.): Reserved for specific organization (matches email domain), typically faster access
+
+**Example - Cross-Version Testing:**
+```bash
+# Test on Android 13, 14, and 15 simultaneously
+# Using shared devices for broader compatibility testing
+./scripts/release.sh 1.0.0 --start-session \
+  --device-id 695a9249f6a40ebd23e29565,682dba7233c7787633294734,685bf304ec144f98463c221d
+```
+
+**Example - Using Dedicated Devices:**
+```bash
+# If you have dedicated devices (deviceOwner matches your organization)
+# These typically provide faster, exclusive access
+./scripts/release.sh 1.0.0 --start-session \
+  --device-id 68d153469457da61a16488b9
+```
+
+**💡 Pro Tips:**
+
+1. **Shared vs Dedicated Devices:**
+   - Use **shared devices** for general testing and CI/CD pipelines
+   - Use **dedicated devices** (when available) for critical releases or performance testing
+   - Check the `deviceOwner` field - if it matches your email domain (e.g., user@**aspora.com** → `deviceOwner: "aspora.com"`), you have priority access to that device
+
+2. **Choosing Multiple Devices:**
+   - Mix shared and dedicated devices for cost-effective testing
+   - Example: `--device-id dedicated-device,shared-device1,shared-device2`
+
+3. **Filter Dedicated Devices:**
+   ```bash
+   # Get all your organization's dedicated devices (replace with your email domain)
+   # Example: if your email is john@aspora.com, search for "aspora.com"
+   curl -X GET 'https://api.nativebridge.io/v1/devices?device_type=android&emulated=false' \
+     -H 'X-Api-Key: YOUR_API_KEY' | grep -A 6 '"deviceOwner": "aspora.com"'
+   ```
 
 ### Parameters
 
