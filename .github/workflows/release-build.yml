@@ -630,11 +630,15 @@ jobs:
             echo "⚠️  No beta sessions were started"
           fi
 
-      # Send Slack Notification (Optional)
-      - name: Send Slack Notification
+      # Send Slack Notification for Production Sessions (Optional)
+      - name: Send Slack Notification - Production
         if: steps.get_version.outputs.SESSION_ENABLED == 'true' && env.SESSION_URLS != ''
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SESSION_IDS: ${{ env.SESSION_IDS }}
+          SESSION_URLS: ${{ env.SESSION_URLS }}
+          DEVICE_IDS: ${{ steps.get_version.outputs.SESSION_DEVICE_IDS }}
+          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }}
         run: |
           # Check if Slack webhook is configured
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
@@ -644,6 +648,22 @@ jobs:
 
           VERSION=${{ steps.get_version.outputs.VERSION }}
 
+          # Split comma-separated values
+          IFS=',' read -ra SESSION_ID_ARRAY <<< "$SESSION_IDS"
+          IFS=',' read -ra SESSION_URL_ARRAY <<< "$SESSION_URLS"
+          IFS=',' read -ra DEVICE_ID_ARRAY <<< "$DEVICE_IDS"
+
+          SESSION_COUNT=${#SESSION_ID_ARRAY[@]}
+
+          # Build session links text
+          SESSION_LINKS=""
+          for i in "${!SESSION_ID_ARRAY[@]}"; do
+            SESSION_ID="${SESSION_ID_ARRAY[$i]}"
+            SESSION_URL="${SESSION_URL_ARRAY[$i]}"
+            DEVICE_ID="${DEVICE_ID_ARRAY[$i]}"
+            SESSION_LINKS="${SESSION_LINKS}• <${SESSION_URL}|Device: ${DEVICE_ID}> (ID: \`${SESSION_ID}\`)\n"
+          done
+
           # Create Slack message payload
           PAYLOAD=$(cat <<EOF
           {
@@ -652,7 +672,7 @@ jobs:
                 "type": "header",
                 "text": {
                   "type": "plain_text",
-                  "text": "🚀 NativeBridge Session Started",
+                  "text": "🚀 Production Sessions Started (${SESSION_COUNT})",
                   "emoji": true
                 }
               },
@@ -661,19 +681,19 @@ jobs:
                 "fields": [
                   {
                     "type": "mrkdwn",
-                    "text": "*App Version:*\n$VERSION"
+                    "text": "*App Version:*\n${VERSION}"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Session ID:*\n${{ env.SESSION_ID }}"
+                    "text": "*Sessions:*\n${SESSION_COUNT} device(s)"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Device ID:*\n${{ env.DEVICE_ID || env.DEFAULT_DEVICE_ID }}"
+                    "text": "*Validity:*\n${SESSION_VALIDITY} seconds"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Validity:*\n${{ env.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds"
+                    "text": "*Type:*\nProduction"
                   }
                 ]
               },
@@ -681,7 +701,7 @@ jobs:
                 "type": "section",
                 "text": {
                   "type": "mrkdwn",
-                  "text": "🔗 *Session URL:*\n<${{ env.SESSION_URL }}|Launch Session>"
+                  "text": "🔗 *Session Links:*\n${SESSION_LINKS}"
                 }
               },
               {
@@ -706,7 +726,7 @@ jobs:
             -s -o /dev/null)
 
           if [ "$HTTP_CODE" -eq 200 ]; then
-            echo "✅ Slack notification sent successfully"
+            echo "✅ Production Slack notification sent successfully (${SESSION_COUNT} sessions)"
           else
             echo "⚠️  Failed to send Slack notification (HTTP $HTTP_CODE)"
           fi
@@ -716,6 +736,10 @@ jobs:
         if: steps.get_version.outputs.SESSION_ENABLED == 'true' && steps.get_version.outputs.BETA_ENABLED == 'true' && env.BETA_SESSION_URLS != ''
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          BETA_SESSION_IDS: ${{ env.BETA_SESSION_IDS }}
+          BETA_SESSION_URLS: ${{ env.BETA_SESSION_URLS }}
+          BETA_DEVICE_IDS: ${{ steps.get_version.outputs.BETA_DEVICE_IDS }}
+          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }}
         run: |
           # Check if Slack webhook is configured
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
@@ -725,6 +749,22 @@ jobs:
 
           VERSION=${{ steps.get_version.outputs.VERSION }}
 
+          # Split comma-separated values
+          IFS=',' read -ra SESSION_ID_ARRAY <<< "$BETA_SESSION_IDS"
+          IFS=',' read -ra SESSION_URL_ARRAY <<< "$BETA_SESSION_URLS"
+          IFS=',' read -ra DEVICE_ID_ARRAY <<< "$BETA_DEVICE_IDS"
+
+          SESSION_COUNT=${#SESSION_ID_ARRAY[@]}
+
+          # Build session links text
+          SESSION_LINKS=""
+          for i in "${!SESSION_ID_ARRAY[@]}"; do
+            SESSION_ID="${SESSION_ID_ARRAY[$i]}"
+            SESSION_URL="${SESSION_URL_ARRAY[$i]}"
+            DEVICE_ID="${DEVICE_ID_ARRAY[$i]}"
+            SESSION_LINKS="${SESSION_LINKS}• <${SESSION_URL}|Device: ${DEVICE_ID}> (ID: \`${SESSION_ID}\`)\n"
+          done
+
           # Create Slack message payload for beta
           PAYLOAD=$(cat <<EOF
           {
@@ -733,7 +773,7 @@ jobs:
                 "type": "header",
                 "text": {
                   "type": "plain_text",
-                  "text": "🧪 NativeBridge Beta Session Started",
+                  "text": "🧪 Beta Sessions Started (${SESSION_COUNT})",
                   "emoji": true
                 }
               },
@@ -742,19 +782,19 @@ jobs:
                 "fields": [
                   {
                     "type": "mrkdwn",
-                    "text": "*App Version:*\n$VERSION-beta"
+                    "text": "*App Version:*\n${VERSION}-beta"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Session ID:*\n${{ env.BETA_SESSION_ID }}"
+                    "text": "*Sessions:*\n${SESSION_COUNT} device(s)"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Device ID:*\n${{ env.BETA_DEVICE_ID || env.DEFAULT_DEVICE_ID }}"
+                    "text": "*Validity:*\n${SESSION_VALIDITY} seconds"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*Validity:*\n${{ env.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds"
+                    "text": "*Type:*\nBeta"
                   }
                 ]
               },
@@ -762,7 +802,7 @@ jobs:
                 "type": "section",
                 "text": {
                   "type": "mrkdwn",
-                  "text": "🔗 *Beta Session URL:*\n<${{ env.BETA_SESSION_URL }}|Launch Beta Session>"
+                  "text": "🔗 *Session Links:*\n${SESSION_LINKS}"
                 }
               },
               {
@@ -787,7 +827,7 @@ jobs:
             -s -o /dev/null)
 
           if [ "$HTTP_CODE" -eq 200 ]; then
-            echo "✅ Beta Slack notification sent successfully"
+            echo "✅ Beta Slack notification sent successfully (${SESSION_COUNT} sessions)"
           else
             echo "⚠️  Failed to send beta Slack notification (HTTP $HTTP_CODE)"
           fi
@@ -832,25 +872,55 @@ jobs:
           fi
 
           # Add production session info if started
-          if [ -n "${{ env.SESSION_URL }}" ]; then
+          if [ -n "${{ env.SESSION_URLS }}" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🚀 Active Session - Production ✅" >> $GITHUB_STEP_SUMMARY
+            echo "### 🚀 Active Production Sessions ✅" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Session ID:** ${{ env.SESSION_ID }}" >> $GITHUB_STEP_SUMMARY
-            echo "**Session URL:** [${{ env.SESSION_URL }}](${{ env.SESSION_URL }})" >> $GITHUB_STEP_SUMMARY
-            echo "**Device ID:** ${{ env.DEVICE_ID || env.DEFAULT_DEVICE_ID }}" >> $GITHUB_STEP_SUMMARY
-            echo "**Validity:** ${{ env.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds" >> $GITHUB_STEP_SUMMARY
+
+            # Split comma-separated values
+            IFS=',' read -ra SESSION_IDS_ARRAY <<< "${{ env.SESSION_IDS }}"
+            IFS=',' read -ra SESSION_URLS_ARRAY <<< "${{ env.SESSION_URLS }}"
+            IFS=',' read -ra DEVICE_IDS_ARRAY <<< "${{ steps.get_version.outputs.SESSION_DEVICE_IDS }}"
+
+            echo "**Sessions:** ${#SESSION_IDS_ARRAY[@]} device(s)" >> $GITHUB_STEP_SUMMARY
+            echo "**Validity:** ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # Loop through sessions
+            for i in "${!SESSION_IDS_ARRAY[@]}"; do
+              SESSION_NUM=$((i+1))
+              echo "**Session $SESSION_NUM:**" >> $GITHUB_STEP_SUMMARY
+              echo "- Device: \`${DEVICE_IDS_ARRAY[$i]}\`" >> $GITHUB_STEP_SUMMARY
+              echo "- Session ID: \`${SESSION_IDS_ARRAY[$i]}\`" >> $GITHUB_STEP_SUMMARY
+              echo "- [Launch Session →](${SESSION_URLS_ARRAY[$i]})" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            done
           fi
 
           # Add beta session info if started
-          if [ -n "${{ env.BETA_SESSION_URL }}" ]; then
+          if [ -n "${{ env.BETA_SESSION_URLS }}" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🧪 Active Session - Beta ✅" >> $GITHUB_STEP_SUMMARY
+            echo "### 🧪 Active Beta Sessions ✅" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Beta Session ID:** ${{ env.BETA_SESSION_ID }}" >> $GITHUB_STEP_SUMMARY
-            echo "**Beta Session URL:** [${{ env.BETA_SESSION_URL }}](${{ env.BETA_SESSION_URL }})" >> $GITHUB_STEP_SUMMARY
-            echo "**Beta Device ID:** ${{ env.BETA_DEVICE_ID || env.DEFAULT_DEVICE_ID }}" >> $GITHUB_STEP_SUMMARY
-            echo "**Validity:** ${{ env.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds" >> $GITHUB_STEP_SUMMARY
+
+            # Split comma-separated values
+            IFS=',' read -ra BETA_SESSION_IDS_ARRAY <<< "${{ env.BETA_SESSION_IDS }}"
+            IFS=',' read -ra BETA_SESSION_URLS_ARRAY <<< "${{ env.BETA_SESSION_URLS }}"
+            IFS=',' read -ra BETA_DEVICE_IDS_ARRAY <<< "${{ steps.get_version.outputs.BETA_DEVICE_IDS }}"
+
+            echo "**Sessions:** ${#BETA_SESSION_IDS_ARRAY[@]} device(s)" >> $GITHUB_STEP_SUMMARY
+            echo "**Validity:** ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # Loop through sessions
+            for i in "${!BETA_SESSION_IDS_ARRAY[@]}"; do
+              SESSION_NUM=$((i+1))
+              echo "**Beta Session $SESSION_NUM:**" >> $GITHUB_STEP_SUMMARY
+              echo "- Device: \`${BETA_DEVICE_IDS_ARRAY[$i]}\`" >> $GITHUB_STEP_SUMMARY
+              echo "- Session ID: \`${BETA_SESSION_IDS_ARRAY[$i]}\`" >> $GITHUB_STEP_SUMMARY
+              echo "- [Launch Beta Session →](${BETA_SESSION_URLS_ARRAY[$i]})" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            done
           fi
 
   # ============================================================================
