@@ -521,7 +521,8 @@ jobs:
               fi
 
               # Send Slack notification immediately if webhook is configured
-              if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+              SLACK_WEBHOOK="${{ secrets.SLACK_WEBHOOK_URL }}"
+              if [ -n "$SLACK_WEBHOOK" ]; then
                 echo "📤 Sending Slack notification for this session..."
 
                 VERSION="${{ steps.get_version.outputs.VERSION }}"
@@ -549,17 +550,21 @@ jobs:
                 PAYLOAD="${PAYLOAD}${RUN_ID}"
                 PAYLOAD="${PAYLOAD}"'|View Workflow>"}]}]}'
 
-                SLACK_HTTP_CODE=$(curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+                echo "Sending to Slack webhook..."
+                SLACK_HTTP_CODE=$(curl -X POST "$SLACK_WEBHOOK" \
                   -H "Content-Type: application/json" \
                   -d "$PAYLOAD" \
                   -w "%{http_code}" \
                   -s -o /dev/null)
 
                 if [ "$SLACK_HTTP_CODE" -eq 200 ]; then
-                  echo "✅ Slack notification sent"
+                  echo "✅ Slack notification sent successfully"
                 else
                   echo "⚠️  Slack notification failed (HTTP $SLACK_HTTP_CODE)"
+                  echo "Payload: $PAYLOAD"
                 fi
+              else
+                echo "ℹ️  Slack webhook not configured, skipping notification"
               fi
             else
               echo "❌ Failed to start session (HTTP $HTTP_CODE)"
@@ -671,7 +676,8 @@ jobs:
               fi
 
               # Send Slack notification immediately if webhook is configured
-              if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+              SLACK_WEBHOOK="${{ secrets.SLACK_WEBHOOK_URL }}"
+              if [ -n "$SLACK_WEBHOOK" ]; then
                 echo "📤 Sending Slack notification for this beta session..."
 
                 VERSION="${{ steps.get_version.outputs.VERSION }}"
@@ -699,17 +705,21 @@ jobs:
                 PAYLOAD="${PAYLOAD}${RUN_ID}"
                 PAYLOAD="${PAYLOAD}"'|View Workflow>"}]}]}'
 
-                SLACK_HTTP_CODE=$(curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+                echo "Sending to Slack webhook..."
+                SLACK_HTTP_CODE=$(curl -X POST "$SLACK_WEBHOOK" \
                   -H "Content-Type: application/json" \
                   -d "$PAYLOAD" \
                   -w "%{http_code}" \
                   -s -o /dev/null)
 
                 if [ "$SLACK_HTTP_CODE" -eq 200 ]; then
-                  echo "✅ Slack notification sent"
+                  echo "✅ Slack notification sent successfully"
                 else
                   echo "⚠️  Slack notification failed (HTTP $SLACK_HTTP_CODE)"
+                  echo "Payload: $PAYLOAD"
                 fi
+              else
+                echo "ℹ️  Slack webhook not configured, skipping notification"
               fi
             else
               echo "❌ Failed to start beta session (HTTP $HTTP_CODE)"
