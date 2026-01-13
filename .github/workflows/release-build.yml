@@ -534,7 +534,7 @@ jobs:
                 # Build JSON payload
                 PAYLOAD='{"blocks":[{"type":"header","text":{"type":"plain_text","text":"🚀 Production Session Started ['
                 PAYLOAD="${PAYLOAD}${SESSION_NUM}/${TOTAL_SESSIONS}]"
-                PAYLOAD="${PAYLOAD}"',"emoji":true}},{"type":"section","fields":[{"type":"mrkdwn","text":"*App Version:*\\n'
+                PAYLOAD="${PAYLOAD}"'","emoji":true}},{"type":"section","fields":[{"type":"mrkdwn","text":"*App Version:*\\n'
                 PAYLOAD="${PAYLOAD}${VERSION}"
                 PAYLOAD="${PAYLOAD}"'"},{"type":"mrkdwn","text":"*Device:*\\n`'
                 PAYLOAD="${PAYLOAD}${DEVICE_ID}"
@@ -689,7 +689,7 @@ jobs:
                 # Build JSON payload
                 PAYLOAD='{"blocks":[{"type":"header","text":{"type":"plain_text","text":"🧪 Beta Session Started ['
                 PAYLOAD="${PAYLOAD}${SESSION_NUM}/${TOTAL_SESSIONS}]"
-                PAYLOAD="${PAYLOAD}"',"emoji":true}},{"type":"section","fields":[{"type":"mrkdwn","text":"*App Version:*\\n'
+                PAYLOAD="${PAYLOAD}"'","emoji":true}},{"type":"section","fields":[{"type":"mrkdwn","text":"*App Version:*\\n'
                 PAYLOAD="${PAYLOAD}${VERSION}"
                 PAYLOAD="${PAYLOAD}"'-beta"},{"type":"mrkdwn","text":"*Device:*\\n`'
                 PAYLOAD="${PAYLOAD}${DEVICE_ID}"
