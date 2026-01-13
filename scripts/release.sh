@@ -397,12 +397,25 @@ Beta Build Configuration:
 
 NativeBridge Session Configuration:
 - Auto-start session: enabled
-- Production device IDs: ${DEVICE_IDS}
-- Session validity: ${SESSION_VALIDITY} seconds
+- Production device IDs: ${DEVICE_IDS}"
+
+        if [[ -n "$SESSION_VALIDITY" ]]; then
+            tag_message="${tag_message}
+- Session validity: ${SESSION_VALIDITY} seconds"
+        else
+            tag_message="${tag_message}
+- Session validity: API default"
+        fi
+
+        tag_message="${tag_message}
 
 [NB_SESSION_ENABLED]
-[NB_DEVICE_IDS:${DEVICE_IDS}]
+[NB_DEVICE_IDS:${DEVICE_IDS}]"
+
+        if [[ -n "$SESSION_VALIDITY" ]]; then
+            tag_message="${tag_message}
 [NB_SESSION_VALIDITY:${SESSION_VALIDITY}]"
+        fi
     fi
 
     # Create annotated tag
@@ -573,7 +586,7 @@ main() {
     START_SESSION=false
     DEVICE_IDS="67a642531a4aa535498192f8"  # Default production device ID (comma-separated)
     BETA_DEVICE_IDS=""  # Default: same as production if not specified (comma-separated)
-    SESSION_VALIDITY=120  # Default 2 minutes
+    SESSION_VALIDITY=""  # Optional: if not specified, API uses its default
 
     while [[ $# -gt 0 ]]; do
         case $1 in

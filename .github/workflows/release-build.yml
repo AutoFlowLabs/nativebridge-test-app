@@ -11,7 +11,6 @@ env:
   JAVA_VERSION: '17'
   # Default values for NativeBridge session
   DEFAULT_DEVICE_ID: '67a642531a4aa535498192f8'
-  DEFAULT_SESSION_VALIDITY: '120'
   DEFAULT_REGION: 'ind'
 
 jobs:
@@ -437,7 +436,7 @@ jobs:
         env:
           NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
           DEVICE_IDS: ${{ steps.get_version.outputs.SESSION_DEVICE_IDS || env.DEFAULT_DEVICE_ID }}
-          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }}
+          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY }}
         run: |
           if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
             echo "⚠️  NATIVEBRIDGE_API_KEY secret not configured - skipping session start"
@@ -449,14 +448,21 @@ jobs:
             exit 0
           fi
 
-          # Validate session validity (must be between 30 and 300 seconds)
-          VALIDITY=$SESSION_VALIDITY
-          if [ "$VALIDITY" -lt 30 ]; then
-            echo "⚠️  Session validity too low ($VALIDITY seconds), using minimum: 30 seconds"
-            VALIDITY=30
-          elif [ "$VALIDITY" -gt 300 ]; then
-            echo "⚠️  Session validity too high ($VALIDITY seconds), using maximum: 300 seconds"
-            VALIDITY=300
+          # Check if session validity was provided by user
+          VALIDITY_PROVIDED=false
+          VALIDITY=""
+          if [ -n "$SESSION_VALIDITY" ]; then
+            VALIDITY_PROVIDED=true
+            VALIDITY=$SESSION_VALIDITY
+
+            # Validate session validity (must be between 30 and 300 seconds)
+            if [ "$VALIDITY" -lt 30 ]; then
+              echo "⚠️  Session validity too low ($VALIDITY seconds), using minimum: 30 seconds"
+              VALIDITY=30
+            elif [ "$VALIDITY" -gt 300 ]; then
+              echo "⚠️  Session validity too high ($VALIDITY seconds), using maximum: 300 seconds"
+              VALIDITY=300
+            fi
           fi
 
           # Split device IDs by comma and start sessions for each
@@ -480,20 +486,25 @@ jobs:
             echo "[$((i+1))/${#DEVICES[@]}] Starting session on device: $DEVICE_ID"
             echo "   App ID: ${{ env.NATIVEBRIDGE_APP_ID }}"
             echo "   Region: ${{ env.DEFAULT_REGION }}"
-            echo "   Validity: $VALIDITY seconds"
+            if [ "$VALIDITY_PROVIDED" = true ]; then
+              echo "   Validity: $VALIDITY seconds"
+            else
+              echo "   Validity: API default"
+            fi
+
+            # Build JSON payload conditionally
+            if [ "$VALIDITY_PROVIDED" = true ]; then
+              JSON_PAYLOAD="{\"deviceType\":\"android\",\"deviceId\":\"$DEVICE_ID\",\"appId\":\"${{ env.NATIVEBRIDGE_APP_ID }}\",\"region\":\"${{ env.DEFAULT_REGION }}\",\"executionValidity\":$VALIDITY}"
+            else
+              JSON_PAYLOAD="{\"deviceType\":\"android\",\"deviceId\":\"$DEVICE_ID\",\"appId\":\"${{ env.NATIVEBRIDGE_APP_ID }}\",\"region\":\"${{ env.DEFAULT_REGION }}\"}"
+            fi
 
             # Start session via NativeBridge API
             RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/device/session \
               -H "accept: application/json" \
               -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
               -H "Content-Type: application/json" \
-              -d "{
-                \"deviceType\": \"android\",
-                \"deviceId\": \"$DEVICE_ID\",
-                \"appId\": \"${{ env.NATIVEBRIDGE_APP_ID }}\",
-                \"region\": \"${{ env.DEFAULT_REGION }}\",
-                \"executionValidity\": $VALIDITY
-              }" \
+              -d "$JSON_PAYLOAD" \
               -w "\n%{http_code}" \
               -s)
 
@@ -540,9 +551,13 @@ jobs:
                 PAYLOAD="${PAYLOAD}${DEVICE_ID}"
                 PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Session ID:*\\\\n`'
                 PAYLOAD="${PAYLOAD}${SESSION_ID}"
-                PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Validity:*\\\\n'
-                PAYLOAD="${PAYLOAD}${VALIDITY}"
-                PAYLOAD="${PAYLOAD}"' seconds"}]},{"type":"section","text":{"type":"mrkdwn","text":"🔗 *Session URL:*\\\\n<'
+                if [ "$VALIDITY_PROVIDED" = true ]; then
+                  PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Validity:*\\\\n'
+                  PAYLOAD="${PAYLOAD}${VALIDITY}"
+                  PAYLOAD="${PAYLOAD}"' seconds"}]},{"type":"section","text":{"type":"mrkdwn","text":"🔗 *Session URL:*\\\\n<'
+                else
+                  PAYLOAD="${PAYLOAD}"'`"}]},{"type":"section","text":{"type":"mrkdwn","text":"🔗 *Session URL:*\\\\n<'
+                fi
                 PAYLOAD="${PAYLOAD}${SESSION_URL}"
                 PAYLOAD="${PAYLOAD}"'|Launch Session Now>"}},{"type":"context","elements":[{"type":"mrkdwn","text":"Triggered by GitHub Actions • <https://github.com/'
                 PAYLOAD="${PAYLOAD}${REPO}"
@@ -592,7 +607,7 @@ jobs:
         env:
           NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
           BETA_DEVICE_IDS: ${{ steps.get_version.outputs.BETA_DEVICE_IDS || steps.get_version.outputs.SESSION_DEVICE_IDS || env.DEFAULT_DEVICE_ID }}
-          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }}
+          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY }}
         run: |
           if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
             echo "⚠️  NATIVEBRIDGE_API_KEY secret not configured - skipping beta session start"
@@ -604,14 +619,21 @@ jobs:
             exit 0
           fi
 
-          # Validate session validity (must be between 30 and 300 seconds)
-          VALIDITY=$SESSION_VALIDITY
-          if [ "$VALIDITY" -lt 30 ]; then
-            echo "⚠️  Session validity too low ($VALIDITY seconds), using minimum: 30 seconds"
-            VALIDITY=30
-          elif [ "$VALIDITY" -gt 300 ]; then
-            echo "⚠️  Session validity too high ($VALIDITY seconds), using maximum: 300 seconds"
-            VALIDITY=300
+          # Check if session validity was provided by user
+          VALIDITY_PROVIDED=false
+          VALIDITY=""
+          if [ -n "$SESSION_VALIDITY" ]; then
+            VALIDITY_PROVIDED=true
+            VALIDITY=$SESSION_VALIDITY
+
+            # Validate session validity (must be between 30 and 300 seconds)
+            if [ "$VALIDITY" -lt 30 ]; then
+              echo "⚠️  Session validity too low ($VALIDITY seconds), using minimum: 30 seconds"
+              VALIDITY=30
+            elif [ "$VALIDITY" -gt 300 ]; then
+              echo "⚠️  Session validity too high ($VALIDITY seconds), using maximum: 300 seconds"
+              VALIDITY=300
+            fi
           fi
 
           # Split device IDs by comma and start sessions for each
@@ -635,20 +657,25 @@ jobs:
             echo "[$((i+1))/${#DEVICES[@]}] Starting beta session on device: $DEVICE_ID"
             echo "   Beta App ID: ${{ env.BETA_NATIVEBRIDGE_APP_ID }}"
             echo "   Region: ${{ env.DEFAULT_REGION }}"
-            echo "   Validity: $VALIDITY seconds"
+            if [ "$VALIDITY_PROVIDED" = true ]; then
+              echo "   Validity: $VALIDITY seconds"
+            else
+              echo "   Validity: API default"
+            fi
+
+            # Build JSON payload conditionally
+            if [ "$VALIDITY_PROVIDED" = true ]; then
+              JSON_PAYLOAD="{\"deviceType\":\"android\",\"deviceId\":\"$DEVICE_ID\",\"appId\":\"${{ env.BETA_NATIVEBRIDGE_APP_ID }}\",\"region\":\"${{ env.DEFAULT_REGION }}\",\"executionValidity\":$VALIDITY}"
+            else
+              JSON_PAYLOAD="{\"deviceType\":\"android\",\"deviceId\":\"$DEVICE_ID\",\"appId\":\"${{ env.BETA_NATIVEBRIDGE_APP_ID }}\",\"region\":\"${{ env.DEFAULT_REGION }}\"}"
+            fi
 
             # Start beta session via NativeBridge API
             RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/device/session \
               -H "accept: application/json" \
               -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
               -H "Content-Type: application/json" \
-              -d "{
-                \"deviceType\": \"android\",
-                \"deviceId\": \"$DEVICE_ID\",
-                \"appId\": \"${{ env.BETA_NATIVEBRIDGE_APP_ID }}\",
-                \"region\": \"${{ env.DEFAULT_REGION }}\",
-                \"executionValidity\": $VALIDITY
-              }" \
+              -d "$JSON_PAYLOAD" \
               -w "\n%{http_code}" \
               -s)
 
@@ -695,9 +722,13 @@ jobs:
                 PAYLOAD="${PAYLOAD}${DEVICE_ID}"
                 PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Session ID:*\\\\n`'
                 PAYLOAD="${PAYLOAD}${SESSION_ID}"
-                PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Validity:*\\\\n`'
-                PAYLOAD="${PAYLOAD}${VALIDITY}"
-                PAYLOAD="${PAYLOAD}"' seconds"}]},{"type":"section","text":{"type":"mrkdwn","text":"🔗 *Beta Session URL:*\\\\n<'
+                if [ "$VALIDITY_PROVIDED" = true ]; then
+                  PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Validity:*\\\\n'
+                  PAYLOAD="${PAYLOAD}${VALIDITY}"
+                  PAYLOAD="${PAYLOAD}"' seconds"}]},{"type":"section","text":{"type":"mrkdwn","text":"🔗 *Beta Session URL:*\\\\n<'
+                else
+                  PAYLOAD="${PAYLOAD}"'`"}]},{"type":"section","text":{"type":"mrkdwn","text":"🔗 *Beta Session URL:*\\\\n<'
+                fi
                 PAYLOAD="${PAYLOAD}${SESSION_URL}"
                 PAYLOAD="${PAYLOAD}"'|Launch Beta Session Now>"}},{"type":"context","elements":[{"type":"mrkdwn","text":"Triggered by GitHub Actions • <https://github.com/'
                 PAYLOAD="${PAYLOAD}${REPO}"
@@ -792,7 +823,11 @@ jobs:
             IFS=',' read -ra DEVICE_IDS_ARRAY <<< "${{ steps.get_version.outputs.SESSION_DEVICE_IDS }}"
 
             echo "**Sessions:** ${#SESSION_IDS_ARRAY[@]} device(s)" >> $GITHUB_STEP_SUMMARY
-            echo "**Validity:** ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds" >> $GITHUB_STEP_SUMMARY
+            if [ -n "${{ steps.get_version.outputs.SESSION_VALIDITY }}" ]; then
+              echo "**Validity:** ${{ steps.get_version.outputs.SESSION_VALIDITY }} seconds" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "**Validity:** API default" >> $GITHUB_STEP_SUMMARY
+            fi
             echo "" >> $GITHUB_STEP_SUMMARY
 
             # Loop through sessions
@@ -818,7 +853,11 @@ jobs:
             IFS=',' read -ra BETA_DEVICE_IDS_ARRAY <<< "${{ steps.get_version.outputs.BETA_DEVICE_IDS }}"
 
             echo "**Sessions:** ${#BETA_SESSION_IDS_ARRAY[@]} device(s)" >> $GITHUB_STEP_SUMMARY
-            echo "**Validity:** ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }} seconds" >> $GITHUB_STEP_SUMMARY
+            if [ -n "${{ steps.get_version.outputs.SESSION_VALIDITY }}" ]; then
+              echo "**Validity:** ${{ steps.get_version.outputs.SESSION_VALIDITY }} seconds" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "**Validity:** API default" >> $GITHUB_STEP_SUMMARY
+            fi
             echo "" >> $GITHUB_STEP_SUMMARY
 
             # Loop through sessions
