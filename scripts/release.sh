@@ -385,10 +385,10 @@ Automated build via GitHub Actions CI/CD pipeline."
 Beta Build Configuration:
 - Beta builds enabled: YES
 - Beta version suffix: -beta
-- Beta device ID: ${BETA_DEVICE_ID}
+- Beta device IDs: ${BETA_DEVICE_IDS}
 
 [NB_BETA_ENABLED]
-[NB_BETA_DEVICE_ID:${BETA_DEVICE_ID}]"
+[NB_BETA_DEVICE_IDS:${BETA_DEVICE_IDS}]"
     fi
 
     # Add NativeBridge session info if enabled
@@ -397,11 +397,11 @@ Beta Build Configuration:
 
 NativeBridge Session Configuration:
 - Auto-start session: enabled
-- Production device ID: ${DEVICE_ID}
+- Production device IDs: ${DEVICE_IDS}
 - Session validity: ${SESSION_VALIDITY} seconds
 
 [NB_SESSION_ENABLED]
-[NB_DEVICE_ID:${DEVICE_ID}]
+[NB_DEVICE_IDS:${DEVICE_IDS}]
 [NB_SESSION_VALIDITY:${SESSION_VALIDITY}]"
     fi
 
@@ -420,10 +420,14 @@ NativeBridge Session Configuration:
     fi
 
     if [[ "$START_SESSION" == true ]]; then
-        print_info "Session will auto-start with:"
-        print_info "  Production Device ID: $DEVICE_ID"
+        print_info "Sessions will auto-start with:"
+        # Count production devices
+        IFS=',' read -ra PROD_DEVICES <<< "$DEVICE_IDS"
+        print_info "  Production Devices (${#PROD_DEVICES[@]}): $DEVICE_IDS"
         if [[ "$BUILD_BETA" == true ]]; then
-            print_info "  Beta Device ID: $BETA_DEVICE_ID"
+            # Count beta devices
+            IFS=',' read -ra BETA_DEVICES <<< "$BETA_DEVICE_IDS"
+            print_info "  Beta Devices (${#BETA_DEVICES[@]}): $BETA_DEVICE_IDS"
         fi
         print_info "  Validity: $SESSION_VALIDITY seconds"
     fi
@@ -483,10 +487,14 @@ perform_release() {
             echo -e "${YELLOW}  Beta Version: $version-beta${NC}"
         fi
         if [[ "$START_SESSION" == true ]]; then
-            echo -e "${YELLOW}  Session:      enabled${NC}"
-            echo -e "${YELLOW}  Prod Device:  $DEVICE_ID${NC}"
+            IFS=',' read -ra PROD_DEVICES <<< "$DEVICE_IDS"
+            echo -e "${YELLOW}  Sessions:     enabled${NC}"
+            echo -e "${YELLOW}  Prod Devices: ${#PROD_DEVICES[@]} device(s)${NC}"
+            echo -e "${YELLOW}                $DEVICE_IDS${NC}"
             if [[ "$BUILD_BETA" == true ]]; then
-                echo -e "${YELLOW}  Beta Device:  $BETA_DEVICE_ID${NC}"
+                IFS=',' read -ra BETA_DEVICES <<< "$BETA_DEVICE_IDS"
+                echo -e "${YELLOW}  Beta Devices: ${#BETA_DEVICES[@]} device(s)${NC}"
+                echo -e "${YELLOW}                $BETA_DEVICE_IDS${NC}"
             fi
             echo -e "${YELLOW}  Validity:     $SESSION_VALIDITY seconds${NC}"
         fi
@@ -514,10 +522,12 @@ perform_release() {
             print_info "  - Both uploaded to NativeBridge"
         fi
         if [[ "$START_SESSION" == true ]]; then
-            print_info "Would enable NativeBridge session:"
-            print_info "  - Production Device ID: $DEVICE_ID"
+            IFS=',' read -ra PROD_DEVICES <<< "$DEVICE_IDS"
+            print_info "Would enable NativeBridge sessions:"
+            print_info "  - Production Devices (${#PROD_DEVICES[@]}): $DEVICE_IDS"
             if [[ "$BUILD_BETA" == true ]]; then
-                print_info "  - Beta Device ID: $BETA_DEVICE_ID"
+                IFS=',' read -ra BETA_DEVICES <<< "$BETA_DEVICE_IDS"
+                print_info "  - Beta Devices (${#BETA_DEVICES[@]}): $BETA_DEVICE_IDS"
             fi
             print_info "  - Session validity: $SESSION_VALIDITY seconds"
         fi
@@ -561,8 +571,8 @@ main() {
     FORCE=false
     BUILD_BETA=false
     START_SESSION=false
-    DEVICE_ID="67a642531a4aa535498192f8"  # Default production device ID
-    BETA_DEVICE_ID=""  # Default: same as production if not specified
+    DEVICE_IDS="67a642531a4aa535498192f8"  # Default production device ID (comma-separated)
+    BETA_DEVICE_IDS=""  # Default: same as production if not specified (comma-separated)
     SESSION_VALIDITY=120  # Default 2 minutes
 
     while [[ $# -gt 0 ]]; do
@@ -589,18 +599,18 @@ main() {
                 ;;
             --device-id)
                 if [[ -z "$2" || "$2" == -* ]]; then
-                    print_error "--device-id requires a value"
+                    print_error "--device-id requires a value (comma-separated for multiple devices)"
                     exit 1
                 fi
-                DEVICE_ID="$2"
+                DEVICE_IDS="$2"
                 shift 2
                 ;;
             --beta-device-id)
                 if [[ -z "$2" || "$2" == -* ]]; then
-                    print_error "--beta-device-id requires a value"
+                    print_error "--beta-device-id requires a value (comma-separated for multiple devices)"
                     exit 1
                 fi
-                BETA_DEVICE_ID="$2"
+                BETA_DEVICE_IDS="$2"
                 shift 2
                 ;;
             --session-validity)
@@ -631,20 +641,20 @@ main() {
         esac
     done
 
-    # Set beta device ID default (same as production if not specified)
-    if [[ -z "$BETA_DEVICE_ID" ]]; then
-        BETA_DEVICE_ID="$DEVICE_ID"
+    # Set beta device IDs default (same as production if not specified)
+    if [[ -z "$BETA_DEVICE_IDS" ]]; then
+        BETA_DEVICE_IDS="$DEVICE_IDS"
     fi
 
     # Validate beta options
-    if [[ "$BETA_DEVICE_ID" != "$DEVICE_ID" ]] && [[ "$BUILD_BETA" != true ]]; then
+    if [[ "$BETA_DEVICE_IDS" != "$DEVICE_IDS" ]] && [[ "$BUILD_BETA" != true ]]; then
         print_warning "--beta-device-id requires --beta to be set"
-        print_info "Beta device ID will be ignored"
-        BETA_DEVICE_ID="$DEVICE_ID"
+        print_info "Beta device IDs will be ignored"
+        BETA_DEVICE_IDS="$DEVICE_IDS"
     fi
 
     # Validate session options
-    if [[ "$DEVICE_ID" != "67a642531a4aa535498192f8" || "$SESSION_VALIDITY" != "120" ]] && [[ "$START_SESSION" != true ]]; then
+    if [[ "$DEVICE_IDS" != "67a642531a4aa535498192f8" || "$SESSION_VALIDITY" != "120" ]] && [[ "$START_SESSION" != true ]]; then
         print_warning "--device-id and --session-validity require --start-session to be set"
         print_info "Session options will be ignored"
         DEVICE_ID="67a642531a4aa535498192f8"

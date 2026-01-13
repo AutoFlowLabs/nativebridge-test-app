@@ -26,15 +26,15 @@ jobs:
       nativebridge_versioned_link: ${{ steps.nativebridge_upload.outputs.versioned_link }}
       nativebridge_version: ${{ steps.nativebridge_upload.outputs.nb_version }}
       nativebridge_app_id: ${{ steps.nativebridge_upload.outputs.app_id }}
-      session_id: ${{ steps.start_session.outputs.session_id }}
-      session_url: ${{ steps.start_session.outputs.session_url }}
+      session_ids: ${{ steps.start_session.outputs.session_ids }}
+      session_urls: ${{ steps.start_session.outputs.session_urls }}
       # Beta variant outputs
       beta_nativebridge_link: ${{ steps.nativebridge_upload_beta.outputs.magic_link }}
       beta_nativebridge_versioned_link: ${{ steps.nativebridge_upload_beta.outputs.versioned_link }}
       beta_nativebridge_version: ${{ steps.nativebridge_upload_beta.outputs.nb_version }}
       beta_nativebridge_app_id: ${{ steps.nativebridge_upload_beta.outputs.app_id }}
-      beta_session_id: ${{ steps.start_session_beta.outputs.session_id }}
-      beta_session_url: ${{ steps.start_session_beta.outputs.session_url }}
+      beta_session_ids: ${{ steps.start_session_beta.outputs.session_ids }}
+      beta_session_urls: ${{ steps.start_session_beta.outputs.session_urls }}
 
     steps:
       # Checkout code
@@ -72,11 +72,11 @@ jobs:
             echo "SESSION_ENABLED=true" >> $GITHUB_OUTPUT
             echo "📱 NativeBridge session enabled in tag"
 
-            # Extract device ID
-            DEVICE_ID=$(echo "$TAG_MESSAGE" | grep -o "\[NB_DEVICE_ID:[^]]*\]" | sed 's/\[NB_DEVICE_ID://;s/\]//')
-            if [ -n "$DEVICE_ID" ]; then
-              echo "SESSION_DEVICE_ID=$DEVICE_ID" >> $GITHUB_OUTPUT
-              echo "   Device ID: $DEVICE_ID"
+            # Extract device IDs (comma-separated)
+            DEVICE_IDS=$(echo "$TAG_MESSAGE" | grep -o "\[NB_DEVICE_IDS:[^]]*\]" | sed 's/\[NB_DEVICE_IDS://;s/\]//')
+            if [ -n "$DEVICE_IDS" ]; then
+              echo "SESSION_DEVICE_IDS=$DEVICE_IDS" >> $GITHUB_OUTPUT
+              echo "   Device IDs: $DEVICE_IDS"
             fi
 
             # Extract session validity
@@ -94,11 +94,11 @@ jobs:
             echo "BETA_ENABLED=true" >> $GITHUB_OUTPUT
             echo "🧪 Beta build enabled in tag"
 
-            # Extract beta device ID
-            BETA_DEVICE_ID=$(echo "$TAG_MESSAGE" | grep -o "\[NB_BETA_DEVICE_ID:[^]]*\]" | sed 's/\[NB_BETA_DEVICE_ID://;s/\]//')
-            if [ -n "$BETA_DEVICE_ID" ]; then
-              echo "BETA_DEVICE_ID=$BETA_DEVICE_ID" >> $GITHUB_OUTPUT
-              echo "   Beta Device ID: $BETA_DEVICE_ID"
+            # Extract beta device IDs (comma-separated)
+            BETA_DEVICE_IDS=$(echo "$TAG_MESSAGE" | grep -o "\[NB_BETA_DEVICE_IDS:[^]]*\]" | sed 's/\[NB_BETA_DEVICE_IDS://;s/\]//')
+            if [ -n "$BETA_DEVICE_IDS" ]; then
+              echo "BETA_DEVICE_IDS=$BETA_DEVICE_IDS" >> $GITHUB_OUTPUT
+              echo "   Beta Device IDs: $BETA_DEVICE_IDS"
             fi
           else
             echo "BETA_ENABLED=false" >> $GITHUB_OUTPUT
@@ -430,13 +430,13 @@ jobs:
             echo "⚠️  Continuing without beta upload..."
           fi
 
-      # Start NativeBridge Session (Optional)
-      - name: Start NativeBridge Session
+      # Start NativeBridge Sessions (Multiple Devices - Optional)
+      - name: Start NativeBridge Production Sessions
         id: start_session
         if: steps.get_version.outputs.SESSION_ENABLED == 'true'
         env:
           NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
-          DEVICE_ID: ${{ steps.get_version.outputs.SESSION_DEVICE_ID || env.DEFAULT_DEVICE_ID }}
+          DEVICE_IDS: ${{ steps.get_version.outputs.SESSION_DEVICE_IDS || env.DEFAULT_DEVICE_ID }}
           SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }}
         run: |
           if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
@@ -459,64 +459,84 @@ jobs:
             VALIDITY=300
           fi
 
-          echo "🚀 Starting NativeBridge session..."
-          echo "   Device ID: $DEVICE_ID"
-          echo "   App ID: ${{ env.NATIVEBRIDGE_APP_ID }}"
-          echo "   Region: ${{ env.DEFAULT_REGION }}"
-          echo "   Session Validity: $VALIDITY seconds"
+          # Split device IDs by comma and start sessions for each
+          IFS=',' read -ra DEVICES <<< "$DEVICE_IDS"
+          SESSION_IDS_LIST=""
+          SESSION_URLS_LIST=""
 
-          # Start session via NativeBridge API
-          RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/device/session \
-            -H "accept: application/json" \
-            -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"deviceType\": \"android\",
-              \"deviceId\": \"$DEVICE_ID\",
-              \"appId\": \"${{ env.NATIVEBRIDGE_APP_ID }}\",
-              \"region\": \"${{ env.DEFAULT_REGION }}\",
-              \"executionValidity\": $VALIDITY
-            }" \
-            -w "\n%{http_code}" \
-            -s)
+          echo "🚀 Starting ${#DEVICES[@]} production session(s)..."
 
-          # Extract HTTP status code
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
+          for i in "${!DEVICES[@]}"; do
+            DEVICE_ID="${DEVICES[$i]}"
+            echo ""
+            echo "[$((i+1))/${#DEVICES[@]}] Starting session on device: $DEVICE_ID"
+            echo "   App ID: ${{ env.NATIVEBRIDGE_APP_ID }}"
+            echo "   Region: ${{ env.DEFAULT_REGION }}"
+            echo "   Validity: $VALIDITY seconds"
 
-          if [ "$HTTP_CODE" -eq 200 ]; then
-            echo "✅ Session started successfully!"
+            # Start session via NativeBridge API
+            RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/device/session \
+              -H "accept: application/json" \
+              -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"deviceType\": \"android\",
+                \"deviceId\": \"$DEVICE_ID\",
+                \"appId\": \"${{ env.NATIVEBRIDGE_APP_ID }}\",
+                \"region\": \"${{ env.DEFAULT_REGION }}\",
+                \"executionValidity\": $VALIDITY
+              }" \
+              -w "\n%{http_code}" \
+              -s)
 
-            # Parse response
-            SESSION_ID=$(echo "$BODY" | grep -o '"sessionId":"[^"]*"' | sed 's/"sessionId":"//;s/"//')
-            SESSION_URL=$(echo "$BODY" | grep -o '"sessionUrl":"[^"]*"' | sed 's/"sessionUrl":"//;s/"//')
-            MESSAGE=$(echo "$BODY" | grep -o '"message":"[^"]*"' | sed 's/"message":"//;s/"//')
+            # Extract HTTP status code
+            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
 
-            echo "📱 Session ID: $SESSION_ID"
-            echo "🔗 Session URL: $SESSION_URL"
-            echo "💬 Message: $MESSAGE"
+            if [ "$HTTP_CODE" -eq 200 ]; then
+              echo "✅ Session started successfully!"
 
-            # Save to environment
-            echo "SESSION_ID=$SESSION_ID" >> $GITHUB_ENV
-            echo "SESSION_URL=$SESSION_URL" >> $GITHUB_ENV
+              # Parse response
+              SESSION_ID=$(echo "$BODY" | grep -o '"sessionId":"[^"]*"' | sed 's/"sessionId":"//;s/"//')
+              SESSION_URL=$(echo "$BODY" | grep -o '"sessionUrl":"[^"]*"' | sed 's/"sessionUrl":"//;s/"//')
 
-            # Set outputs
-            echo "session_id=$SESSION_ID" >> $GITHUB_OUTPUT
-            echo "session_url=$SESSION_URL" >> $GITHUB_OUTPUT
+              echo "📱 Session ID: $SESSION_ID"
+              echo "🔗 Session URL: $SESSION_URL"
+
+              # Append to lists
+              if [ -z "$SESSION_IDS_LIST" ]; then
+                SESSION_IDS_LIST="$SESSION_ID"
+                SESSION_URLS_LIST="$SESSION_URL"
+              else
+                SESSION_IDS_LIST="$SESSION_IDS_LIST,$SESSION_ID"
+                SESSION_URLS_LIST="$SESSION_URLS_LIST,$SESSION_URL"
+              fi
+            else
+              echo "❌ Failed to start session (HTTP $HTTP_CODE)"
+              echo "$BODY"
+            fi
+          done
+
+          # Save all sessions to environment (comma-separated)
+          if [ -n "$SESSION_IDS_LIST" ]; then
+            echo "SESSION_IDS=$SESSION_IDS_LIST" >> $GITHUB_ENV
+            echo "SESSION_URLS=$SESSION_URLS_LIST" >> $GITHUB_ENV
+            echo "session_ids=$SESSION_IDS_LIST" >> $GITHUB_OUTPUT
+            echo "session_urls=$SESSION_URLS_LIST" >> $GITHUB_OUTPUT
+
+            echo ""
+            echo "✅ Started ${#DEVICES[@]} production session(s)"
           else
-            echo "❌ Failed to start session (HTTP $HTTP_CODE)"
-            echo "$BODY"
-            # Don't fail the build, just warn
-            echo "⚠️  Continuing without session..."
+            echo "⚠️  No sessions were started"
           fi
 
-      # Start NativeBridge Beta Session (Optional)
-      - name: Start NativeBridge Beta Session
+      # Start NativeBridge Beta Sessions (Multiple Devices - Optional)
+      - name: Start NativeBridge Beta Sessions
         id: start_session_beta
         if: steps.get_version.outputs.SESSION_ENABLED == 'true' && steps.get_version.outputs.BETA_ENABLED == 'true'
         env:
           NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
-          BETA_DEVICE_ID: ${{ steps.get_version.outputs.BETA_DEVICE_ID || steps.get_version.outputs.SESSION_DEVICE_ID || env.DEFAULT_DEVICE_ID }}
+          BETA_DEVICE_IDS: ${{ steps.get_version.outputs.BETA_DEVICE_IDS || steps.get_version.outputs.SESSION_DEVICE_IDS || env.DEFAULT_DEVICE_ID }}
           SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY || env.DEFAULT_SESSION_VALIDITY }}
         run: |
           if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
@@ -539,60 +559,80 @@ jobs:
             VALIDITY=300
           fi
 
-          echo "🚀 Starting NativeBridge Beta session..."
-          echo "   Beta Device ID: $BETA_DEVICE_ID"
-          echo "   Beta App ID: ${{ env.BETA_NATIVEBRIDGE_APP_ID }}"
-          echo "   Region: ${{ env.DEFAULT_REGION }}"
-          echo "   Session Validity: $VALIDITY seconds"
+          # Split device IDs by comma and start sessions for each
+          IFS=',' read -ra DEVICES <<< "$BETA_DEVICE_IDS"
+          BETA_SESSION_IDS_LIST=""
+          BETA_SESSION_URLS_LIST=""
 
-          # Start beta session via NativeBridge API
-          RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/device/session \
-            -H "accept: application/json" \
-            -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"deviceType\": \"android\",
-              \"deviceId\": \"$BETA_DEVICE_ID\",
-              \"appId\": \"${{ env.BETA_NATIVEBRIDGE_APP_ID }}\",
-              \"region\": \"${{ env.DEFAULT_REGION }}\",
-              \"executionValidity\": $VALIDITY
-            }" \
-            -w "\n%{http_code}" \
-            -s)
+          echo "🚀 Starting ${#DEVICES[@]} beta session(s)..."
 
-          # Extract HTTP status code
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
+          for i in "${!DEVICES[@]}"; do
+            DEVICE_ID="${DEVICES[$i]}"
+            echo ""
+            echo "[$((i+1))/${#DEVICES[@]}] Starting beta session on device: $DEVICE_ID"
+            echo "   Beta App ID: ${{ env.BETA_NATIVEBRIDGE_APP_ID }}"
+            echo "   Region: ${{ env.DEFAULT_REGION }}"
+            echo "   Validity: $VALIDITY seconds"
 
-          if [ "$HTTP_CODE" -eq 200 ]; then
-            echo "✅ Beta session started successfully!"
+            # Start beta session via NativeBridge API
+            RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/device/session \
+              -H "accept: application/json" \
+              -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"deviceType\": \"android\",
+                \"deviceId\": \"$DEVICE_ID\",
+                \"appId\": \"${{ env.BETA_NATIVEBRIDGE_APP_ID }}\",
+                \"region\": \"${{ env.DEFAULT_REGION }}\",
+                \"executionValidity\": $VALIDITY
+              }" \
+              -w "\n%{http_code}" \
+              -s)
 
-            # Parse response
-            SESSION_ID=$(echo "$BODY" | grep -o '"sessionId":"[^"]*"' | sed 's/"sessionId":"//;s/"//')
-            SESSION_URL=$(echo "$BODY" | grep -o '"sessionUrl":"[^"]*"' | sed 's/"sessionUrl":"//;s/"//')
-            MESSAGE=$(echo "$BODY" | grep -o '"message":"[^"]*"' | sed 's/"message":"//;s/"//')
+            # Extract HTTP status code
+            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
 
-            echo "📱 Beta Session ID: $SESSION_ID"
-            echo "🔗 Beta Session URL: $SESSION_URL"
-            echo "💬 Message: $MESSAGE"
+            if [ "$HTTP_CODE" -eq 200 ]; then
+              echo "✅ Beta session started successfully!"
 
-            # Save to environment
-            echo "BETA_SESSION_ID=$SESSION_ID" >> $GITHUB_ENV
-            echo "BETA_SESSION_URL=$SESSION_URL" >> $GITHUB_ENV
+              # Parse response
+              SESSION_ID=$(echo "$BODY" | grep -o '"sessionId":"[^"]*"' | sed 's/"sessionId":"//;s/"//')
+              SESSION_URL=$(echo "$BODY" | grep -o '"sessionUrl":"[^"]*"' | sed 's/"sessionUrl":"//;s/"//')
 
-            # Set outputs
-            echo "session_id=$SESSION_ID" >> $GITHUB_OUTPUT
-            echo "session_url=$SESSION_URL" >> $GITHUB_OUTPUT
+              echo "📱 Session ID: $SESSION_ID"
+              echo "🔗 Session URL: $SESSION_URL"
+
+              # Append to lists
+              if [ -z "$BETA_SESSION_IDS_LIST" ]; then
+                BETA_SESSION_IDS_LIST="$SESSION_ID"
+                BETA_SESSION_URLS_LIST="$SESSION_URL"
+              else
+                BETA_SESSION_IDS_LIST="$BETA_SESSION_IDS_LIST,$SESSION_ID"
+                BETA_SESSION_URLS_LIST="$BETA_SESSION_URLS_LIST,$SESSION_URL"
+              fi
+            else
+              echo "❌ Failed to start beta session (HTTP $HTTP_CODE)"
+              echo "$BODY"
+            fi
+          done
+
+          # Save all beta sessions to environment (comma-separated)
+          if [ -n "$BETA_SESSION_IDS_LIST" ]; then
+            echo "BETA_SESSION_IDS=$BETA_SESSION_IDS_LIST" >> $GITHUB_ENV
+            echo "BETA_SESSION_URLS=$BETA_SESSION_URLS_LIST" >> $GITHUB_ENV
+            echo "session_ids=$BETA_SESSION_IDS_LIST" >> $GITHUB_OUTPUT
+            echo "session_urls=$BETA_SESSION_URLS_LIST" >> $GITHUB_OUTPUT
+
+            echo ""
+            echo "✅ Started ${#DEVICES[@]} beta session(s)"
           else
-            echo "❌ Failed to start beta session (HTTP $HTTP_CODE)"
-            echo "$BODY"
-            # Don't fail the build, just warn
-            echo "⚠️  Continuing without beta session..."
+            echo "⚠️  No beta sessions were started"
           fi
 
       # Send Slack Notification (Optional)
       - name: Send Slack Notification
-        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && env.SESSION_URL != ''
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && env.SESSION_URLS != ''
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
@@ -673,7 +713,7 @@ jobs:
 
       # Send Beta Slack Notification (Optional)
       - name: Send Beta Slack Notification
-        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && steps.get_version.outputs.BETA_ENABLED == 'true' && env.BETA_SESSION_URL != ''
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && steps.get_version.outputs.BETA_ENABLED == 'true' && env.BETA_SESSION_URLS != ''
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |

@@ -556,22 +556,47 @@ The pipeline supports building **two variants simultaneously** - production and 
 # Basic beta + production build
 ./scripts/release.sh 1.0.0 --beta
 
-# Beta build with sessions on both devices
+# Beta build with single session on each variant
 ./scripts/release.sh 1.0.0 --beta --start-session \
   --device-id prod-device-id \
   --beta-device-id beta-device-id
 
-# Beta with custom session duration
+# MULTIPLE SESSIONS: 1 prod session + 2 beta sessions
 ./scripts/release.sh 1.0.0 --beta --start-session \
-  --device-id prod-device-id \
-  --beta-device-id beta-device-id \
-  --session-validity 180
+  --device-id 682dba7233c7787633294734 \
+  --beta-device-id 67a6424f1a4aa535498192f7,67a642531a4aa535498192f8
+
+# MULTIPLE SESSIONS: 2 prod sessions + 2 beta sessions
+./scripts/release.sh 1.0.0 --beta --start-session \
+  --device-id dev1-id,dev2-id \
+  --beta-device-id beta-dev1-id,beta-dev2-id \
+  --session-validity 240
+
+# Production only with 3 sessions on different devices
+./scripts/release.sh 1.0.0 --start-session \
+  --device-id device1,device2,device3
 ```
+
+### Multiple Sessions Feature
+
+**New in v1.3.0**: You can now start sessions on **multiple devices** by providing comma-separated device IDs.
+
+**Examples:**
+- `--device-id dev1,dev2` - Starts 2 production sessions
+- `--beta-device-id beta1,beta2,beta3` - Starts 3 beta sessions
+- Mix and match: 1 prod + 2 beta, or 3 prod + 1 beta, etc.
+
+**Use Cases:**
+- Test on multiple Android versions simultaneously
+- QA team: parallel testing on different devices
+- Region testing: different device configurations
+- Performance comparison across devices
 
 ### Parameters
 
 - `--beta` - Enable beta build (builds both production and beta)
-- `--beta-device-id <id>` - Device ID for beta session (defaults to production device ID)
+- `--device-id <ids>` - Device IDs for production sessions (comma-separated for multiple)
+- `--beta-device-id <ids>` - Device IDs for beta sessions (comma-separated for multiple, defaults to production device IDs)
 
 ### Pre-built APK Approach
 
@@ -660,8 +685,9 @@ When you use `--beta`, the pipeline creates:
 - Beta app with separate magic link and versioned link
 
 **Sessions** (if `--start-session` used):
-- Production session on production device
-- Beta session on beta device (or same device if `--beta-device-id` not specified)
+- Multiple production sessions (one per device ID in `--device-id`)
+- Multiple beta sessions (one per device ID in `--beta-device-id`)
+- Example: `--device-id d1,d2 --beta-device-id b1,b2,b3` creates 2 prod + 3 beta sessions
 
 **Slack Notifications** (if configured):
 - Production session notification
@@ -683,11 +709,20 @@ When you use `--beta`, the pipeline creates:
 ./scripts/release.sh 2.0.0 --beta --start-session
 ```
 
-**QA testing multiple versions:**
+**QA testing on multiple devices:**
 ```bash
-# QA can test both versions simultaneously
+# QA team testing on 3 devices per variant (6 sessions total!)
 ./scripts/release.sh 1.2.3 --beta --start-session \
+  --device-id qa-android10,qa-android11,qa-android12 \
+  --beta-device-id qa-tablet1,qa-tablet2,qa-phone1 \
   --session-validity 300
+```
+
+**Load testing / Performance comparison:**
+```bash
+# Test production on 5 different device configurations
+./scripts/release.sh 1.3.0 --start-session \
+  --device-id low-end,mid-range,high-end,tablet,foldable
 ```
 
 ### Where to Find Beta Links
