@@ -530,58 +530,24 @@ jobs:
                 SESSION_NUM=$((i+1))
                 TOTAL_SESSIONS=${#DEVICES[@]}
 
-                PAYLOAD=$(cat <<SLACKEOF
-{
-  "blocks": [
-    {
-      "type": "header",
-      "text": {
-        "type": "plain_text",
-        "text": "🚀 Production Session Started [${SESSION_NUM}/${TOTAL_SESSIONS}]",
-        "emoji": true
-      }
-    },
-    {
-      "type": "section",
-      "fields": [
-        {
-          "type": "mrkdwn",
-          "text": "*App Version:*\n${VERSION}"
-        },
-        {
-          "type": "mrkdwn",
-          "text": "*Device:*\n\\\`${DEVICE_ID}\\\`"
-        },
-        {
-          "type": "mrkdwn",
-          "text": "*Session ID:*\n\\\`${SESSION_ID}\\\`"
-        },
-        {
-          "type": "mrkdwn",
-          "text": "*Validity:*\n${VALIDITY} seconds"
-        }
-      ]
-    },
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": "🔗 *Session URL:*\n<${SESSION_URL}|Launch Session Now>"
-      }
-    },
-    {
-      "type": "context",
-      "elements": [
-        {
-          "type": "mrkdwn",
-          "text": "Triggered by GitHub Actions • <https://github.com/${REPO}/actions/runs/${RUN_ID}|View Workflow>"
-        }
-      ]
-    }
-  ]
-}
-SLACKEOF
-)
+                # Build JSON payload
+                PAYLOAD='{"blocks":[{"type":"header","text":{"type":"plain_text","text":"🚀 Production Session Started ['
+                PAYLOAD="${PAYLOAD}${SESSION_NUM}/${TOTAL_SESSIONS}]"
+                PAYLOAD="${PAYLOAD}"',"emoji":true}},{"type":"section","fields":[{"type":"mrkdwn","text":"*App Version:*\\n'
+                PAYLOAD="${PAYLOAD}${VERSION}"
+                PAYLOAD="${PAYLOAD}"'"},{"type":"mrkdwn","text":"*Device:*\\n`'
+                PAYLOAD="${PAYLOAD}${DEVICE_ID}"
+                PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Session ID:*\\n`'
+                PAYLOAD="${PAYLOAD}${SESSION_ID}"
+                PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Validity:*\\n'
+                PAYLOAD="${PAYLOAD}${VALIDITY}"
+                PAYLOAD="${PAYLOAD}"' seconds"}]},{"type":"section","text":{"type":"mrkdwn","text":"🔗 *Session URL:*\\n<'
+                PAYLOAD="${PAYLOAD}${SESSION_URL}"
+                PAYLOAD="${PAYLOAD}"'|Launch Session Now>"}},{"type":"context","elements":[{"type":"mrkdwn","text":"Triggered by GitHub Actions • <https://github.com/'
+                PAYLOAD="${PAYLOAD}${REPO}"
+                PAYLOAD="${PAYLOAD}"'/actions/runs/'
+                PAYLOAD="${PAYLOAD}${RUN_ID}"
+                PAYLOAD="${PAYLOAD}"'|View Workflow>"}]}]}'
 
                 SLACK_HTTP_CODE=$(curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
                   -H "Content-Type: application/json" \
@@ -714,58 +680,24 @@ SLACKEOF
                 SESSION_NUM=$((i+1))
                 TOTAL_SESSIONS=${#DEVICES[@]}
 
-                PAYLOAD=$(cat <<SLACKEOF
-{
-  "blocks": [
-    {
-      "type": "header",
-      "text": {
-        "type": "plain_text",
-        "text": "🧪 Beta Session Started [${SESSION_NUM}/${TOTAL_SESSIONS}]",
-        "emoji": true
-      }
-    },
-    {
-      "type": "section",
-      "fields": [
-        {
-          "type": "mrkdwn",
-          "text": "*App Version:*\n${VERSION}-beta"
-        },
-        {
-          "type": "mrkdwn",
-          "text": "*Device:*\n\\\`${DEVICE_ID}\\\`"
-        },
-        {
-          "type": "mrkdwn",
-          "text": "*Session ID:*\n\\\`${SESSION_ID}\\\`"
-        },
-        {
-          "type": "mrkdwn",
-          "text": "*Validity:*\n${VALIDITY} seconds"
-        }
-      ]
-    },
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": "🔗 *Beta Session URL:*\n<${SESSION_URL}|Launch Beta Session Now>"
-      }
-    },
-    {
-      "type": "context",
-      "elements": [
-        {
-          "type": "mrkdwn",
-          "text": "Triggered by GitHub Actions • <https://github.com/${REPO}/actions/runs/${RUN_ID}|View Workflow>"
-        }
-      ]
-    }
-  ]
-}
-SLACKEOF
-)
+                # Build JSON payload
+                PAYLOAD='{"blocks":[{"type":"header","text":{"type":"plain_text","text":"🧪 Beta Session Started ['
+                PAYLOAD="${PAYLOAD}${SESSION_NUM}/${TOTAL_SESSIONS}]"
+                PAYLOAD="${PAYLOAD}"',"emoji":true}},{"type":"section","fields":[{"type":"mrkdwn","text":"*App Version:*\\n'
+                PAYLOAD="${PAYLOAD}${VERSION}"
+                PAYLOAD="${PAYLOAD}"'-beta"},{"type":"mrkdwn","text":"*Device:*\\n`'
+                PAYLOAD="${PAYLOAD}${DEVICE_ID}"
+                PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Session ID:*\\n`'
+                PAYLOAD="${PAYLOAD}${SESSION_ID}"
+                PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Validity:*\\n'
+                PAYLOAD="${PAYLOAD}${VALIDITY}"
+                PAYLOAD="${PAYLOAD}"' seconds"}]},{"type":"section","text":{"type":"mrkdwn","text":"🔗 *Beta Session URL:*\\n<'
+                PAYLOAD="${PAYLOAD}${SESSION_URL}"
+                PAYLOAD="${PAYLOAD}"'|Launch Beta Session Now>"}},{"type":"context","elements":[{"type":"mrkdwn","text":"Triggered by GitHub Actions • <https://github.com/'
+                PAYLOAD="${PAYLOAD}${REPO}"
+                PAYLOAD="${PAYLOAD}"'/actions/runs/'
+                PAYLOAD="${PAYLOAD}${RUN_ID}"
+                PAYLOAD="${PAYLOAD}"'|View Workflow>"}]}]}'
 
                 SLACK_HTTP_CODE=$(curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
                   -H "Content-Type: application/json" \
