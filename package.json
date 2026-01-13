@@ -1,6 +1,6 @@
 {
   "name": "NativeBridge",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "private": true,
   "description": "Production Android testing application with mandatory biometric authentication gate",
   "scripts": {
