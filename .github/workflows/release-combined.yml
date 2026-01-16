@@ -39,6 +39,7 @@ jobs:
     name: Upload APK & Start Session
     runs-on: ubuntu-latest
     outputs:
+      version: ${{ steps.get_version.outputs.VERSION }}
       session_id: ${{ steps.combined_api.outputs.session_id }}
       session_url: ${{ steps.combined_api.outputs.session_url }}
       app_id: ${{ steps.combined_api.outputs.app_id }}
@@ -537,13 +538,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Extract version
+      - name: Get version from previous job
         id: get_version
         run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          VERSION=${TAG_NAME#v}
+          # Use version from upload-and-session job (works for both manual and tag triggers)
+          VERSION="${{ needs.upload-and-session.outputs.version }}"
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
 
       - name: Download Production APK
         uses: actions/download-artifact@v4
@@ -559,11 +560,12 @@ jobs:
           path: artifacts/
 
       - name: Create Release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v1
         with:
-          name: Release ${{ steps.get_version.outputs.TAG_NAME }}
+          name: Release v${{ steps.get_version.outputs.VERSION }}
           draft: false
-          prerelease: ${{ contains(steps.get_version.outputs.TAG_NAME, 'beta') || contains(steps.get_version.outputs.TAG_NAME, 'alpha') }}
+          prerelease: ${{ contains(steps.get_version.outputs.VERSION, 'beta') || contains(steps.get_version.outputs.VERSION, 'alpha') }}
           body: |
             ## NativeBridge Release ${{ steps.get_version.outputs.VERSION }}
 
@@ -578,7 +580,6 @@ jobs:
             ### Build Information
             - **Version:** ${{ steps.get_version.outputs.VERSION }}
             - **Commit:** ${{ github.sha }}
-            - **Tag:** ${{ steps.get_version.outputs.TAG_NAME }}
 
             ---
 
@@ -588,3 +589,14 @@ jobs:
             artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}-beta.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # For manual triggers, just show summary (no GitHub release)
+      - name: Manual Run Summary
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "### Manual Test Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "GitHub Release is only created for tag-triggered runs." >> $GITHUB_STEP_SUMMARY
+          echo "To create a release, use: \`./scripts/release.sh X.Y.Z --start-session\`" >> $GITHUB_STEP_SUMMARY
