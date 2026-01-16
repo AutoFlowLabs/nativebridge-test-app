@@ -1,0 +1,590 @@
+name: Release (Combined API)
+
+# Trigger on release tags OR manual trigger for testing
+on:
+  push:
+    tags:
+      - 'v*'
+
+  # Manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.5.0)'
+        required: true
+        default: '1.0.0-test'
+      device_id:
+        description: 'Device ID for session'
+        required: true
+        default: '67a642531a4aa535498192f8'
+      session_validity:
+        description: 'Session validity in seconds (30-300, leave empty for API default)'
+        required: false
+        default: ''
+      build_beta:
+        description: 'Also build beta variant?'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  DEFAULT_DEVICE_ID: '67a642531a4aa535498192f8'
+  DEFAULT_REGION: 'ind'
+
+jobs:
+  # ============================================================================
+  # Upload & Start Session (Combined API)
+  # ============================================================================
+  upload-and-session:
+    name: Upload APK & Start Session
+    runs-on: ubuntu-latest
+    outputs:
+      session_id: ${{ steps.combined_api.outputs.session_id }}
+      session_url: ${{ steps.combined_api.outputs.session_url }}
+      app_id: ${{ steps.combined_api.outputs.app_id }}
+      magic_link: ${{ steps.combined_api.outputs.magic_link }}
+      # Beta outputs
+      beta_session_id: ${{ steps.combined_api_beta.outputs.session_id }}
+      beta_session_url: ${{ steps.combined_api_beta.outputs.session_url }}
+      beta_app_id: ${{ steps.combined_api_beta.outputs.app_id }}
+      beta_magic_link: ${{ steps.combined_api_beta.outputs.magic_link }}
+
+    steps:
+      # Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Fetch tag annotations (only for tag-triggered runs)
+      - name: Fetch tag annotations
+        if: github.event_name == 'push'
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          echo "Fetching tag annotation for: $TAG_NAME"
+          git fetch --force origin tag "$TAG_NAME" --no-tags
+
+      # Extract version and config
+      - name: Extract version and config
+        id: get_version
+        run: |
+          # Check if this is a manual trigger or tag trigger
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # MANUAL TRIGGER - Use inputs from GitHub UI
+            echo "Manual trigger detected - using UI inputs"
+
+            VERSION="${{ github.event.inputs.version }}"
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "TAG_NAME=manual-v$VERSION" >> $GITHUB_OUTPUT
+            echo "Version: $VERSION"
+
+            # Session is always enabled for manual trigger
+            echo "SESSION_ENABLED=true" >> $GITHUB_OUTPUT
+
+            # Device ID from input
+            echo "SESSION_DEVICE_IDS=${{ github.event.inputs.device_id }}" >> $GITHUB_OUTPUT
+            echo "Device ID: ${{ github.event.inputs.device_id }}"
+
+            # Session validity from input (if provided)
+            if [ -n "${{ github.event.inputs.session_validity }}" ]; then
+              echo "SESSION_VALIDITY=${{ github.event.inputs.session_validity }}" >> $GITHUB_OUTPUT
+              echo "Session validity: ${{ github.event.inputs.session_validity }} seconds"
+            fi
+
+            # Beta from input
+            if [ "${{ github.event.inputs.build_beta }}" == "true" ]; then
+              echo "BETA_ENABLED=true" >> $GITHUB_OUTPUT
+              echo "BETA_DEVICE_IDS=${{ github.event.inputs.device_id }}" >> $GITHUB_OUTPUT
+              echo "Beta build: enabled"
+            else
+              echo "BETA_ENABLED=false" >> $GITHUB_OUTPUT
+            fi
+
+          else
+            # TAG TRIGGER - Parse from tag message
+            echo "Tag trigger detected - parsing tag message"
+
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+            VERSION=${TAG_NAME#v}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+            echo "Building version: $VERSION"
+
+            # Parse tag message for configuration
+            TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG_NAME")
+
+            # Check for session config
+            if echo "$TAG_MESSAGE" | grep -q "\[NB_SESSION_ENABLED\]"; then
+              echo "SESSION_ENABLED=true" >> $GITHUB_OUTPUT
+              echo "Session enabled in tag"
+
+              # Extract device IDs
+              DEVICE_IDS=$(echo "$TAG_MESSAGE" | grep -o "\[NB_DEVICE_IDS:[^]]*\]" | sed 's/\[NB_DEVICE_IDS://;s/\]//')
+              if [ -n "$DEVICE_IDS" ]; then
+                echo "SESSION_DEVICE_IDS=$DEVICE_IDS" >> $GITHUB_OUTPUT
+                echo "Device IDs: $DEVICE_IDS"
+              fi
+
+              # Extract session validity
+              VALIDITY=$(echo "$TAG_MESSAGE" | grep -o "\[NB_SESSION_VALIDITY:[^]]*\]" | sed 's/\[NB_SESSION_VALIDITY://;s/\]//')
+              if [ -n "$VALIDITY" ]; then
+                echo "SESSION_VALIDITY=$VALIDITY" >> $GITHUB_OUTPUT
+                echo "Session validity: $VALIDITY seconds"
+              fi
+            else
+              echo "SESSION_ENABLED=false" >> $GITHUB_OUTPUT
+            fi
+
+            # Check for beta build (only for tag triggers)
+            if echo "$TAG_MESSAGE" | grep -q "\[NB_BETA_ENABLED\]"; then
+              echo "BETA_ENABLED=true" >> $GITHUB_OUTPUT
+              echo "Beta build enabled"
+
+              BETA_DEVICE_IDS=$(echo "$TAG_MESSAGE" | grep -o "\[NB_BETA_DEVICE_IDS:[^]]*\]" | sed 's/\[NB_BETA_DEVICE_IDS://;s/\]//')
+              if [ -n "$BETA_DEVICE_IDS" ]; then
+                echo "BETA_DEVICE_IDS=$BETA_DEVICE_IDS" >> $GITHUB_OUTPUT
+                echo "Beta Device IDs: $BETA_DEVICE_IDS"
+              fi
+            else
+              echo "BETA_ENABLED=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      # Prepare APK files
+      - name: Prepare Production APK
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          mkdir -p release-artifacts
+
+          cp builds/NativeBridge-Production.apk \
+             release-artifacts/NativeBridge-v${VERSION}.apk
+
+          FILE_SIZE=$(ls -lh release-artifacts/NativeBridge-v${VERSION}.apk | awk '{print $5}')
+          echo "Production APK ready: $FILE_SIZE"
+          echo "APK_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+
+      - name: Prepare Beta APK
+        if: steps.get_version.outputs.BETA_ENABLED == 'true'
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+
+          if [ ! -f "builds/NativeBridge-Beta.apk" ]; then
+            echo "Beta APK not found at builds/NativeBridge-Beta.apk"
+            exit 1
+          fi
+
+          cp builds/NativeBridge-Beta.apk \
+             release-artifacts/NativeBridge-v${VERSION}-beta.apk
+
+          BETA_FILE_SIZE=$(ls -lh release-artifacts/NativeBridge-v${VERSION}-beta.apk | awk '{print $5}')
+          echo "Beta APK ready: $BETA_FILE_SIZE"
+          echo "BETA_APK_SIZE=$BETA_FILE_SIZE" >> $GITHUB_ENV
+
+      # Upload artifacts
+      - name: Upload Production APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NativeBridge-Android-v${{ steps.get_version.outputs.VERSION }}
+          path: release-artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}.apk
+          retention-days: 90
+
+      - name: Upload Beta APK Artifact
+        if: steps.get_version.outputs.BETA_ENABLED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: NativeBridge-Android-Beta-v${{ steps.get_version.outputs.VERSION }}
+          path: release-artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}-beta.apk
+          retention-days: 90
+
+      # ========================================================================
+      # Combined API Call - Production
+      # Uploads APK AND starts session in ONE request
+      # ========================================================================
+      - name: Upload & Start Session (Production)
+        id: combined_api
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true'
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+          DEVICE_IDS: ${{ steps.get_version.outputs.SESSION_DEVICE_IDS || env.DEFAULT_DEVICE_ID }}
+          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY }}
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          APK_PATH="release-artifacts/NativeBridge-v${VERSION}.apk"
+
+          if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
+            echo "NATIVEBRIDGE_API_KEY not configured - skipping"
+            exit 0
+          fi
+
+          # For now, use the first device ID (combined API handles one device at a time)
+          DEVICE_ID=$(echo "$DEVICE_IDS" | cut -d',' -f1)
+
+          echo "Using Combined API: Upload + Session in one call"
+          echo "  APK: $APK_PATH"
+          echo "  Device: $DEVICE_ID"
+          echo "  Region: ${{ env.DEFAULT_REGION }}"
+
+          # Build curl command with optional parameters
+          CURL_CMD="curl -X POST https://api.nativebridge.io/application/session"
+          CURL_CMD="$CURL_CMD -H \"X-Api-Key: $NATIVEBRIDGE_API_KEY\""
+          CURL_CMD="$CURL_CMD -F \"file=@$APK_PATH\""
+          CURL_CMD="$CURL_CMD -F \"deviceId=$DEVICE_ID\""
+          CURL_CMD="$CURL_CMD -F \"deviceType=android\""
+          CURL_CMD="$CURL_CMD -F \"region=${{ env.DEFAULT_REGION }}\""
+          CURL_CMD="$CURL_CMD -F \"versionAction=create_new_version\""
+          CURL_CMD="$CURL_CMD -F \"accessType=public\""
+
+          # Add session validity if specified
+          if [ -n "$SESSION_VALIDITY" ]; then
+            # Validate range (30-300 for session, but API might allow more)
+            if [ "$SESSION_VALIDITY" -lt 30 ]; then
+              SESSION_VALIDITY=30
+            fi
+            CURL_CMD="$CURL_CMD -F \"executionValidity=$SESSION_VALIDITY\""
+            echo "  Validity: $SESSION_VALIDITY seconds"
+          fi
+
+          CURL_CMD="$CURL_CMD -w \"\\n%{http_code}\" -s"
+
+          # Execute the combined API call
+          echo "Calling combined API..."
+          RESPONSE=$(eval $CURL_CMD)
+
+          # Parse response
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "SUCCESS! APK uploaded and session started in one call"
+
+            # Parse response fields
+            SESSION_ID=$(echo "$BODY" | grep -o '"sessionId":"[^"]*"' | sed 's/"sessionId":"//;s/"//')
+            SESSION_URL=$(echo "$BODY" | grep -o '"sessionUrl":"[^"]*"' | sed 's/"sessionUrl":"//;s/"//')
+            APP_ID=$(echo "$BODY" | grep -o '"appId":"[^"]*"' | sed 's/"appId":"//;s/"//')
+            MAGIC_LINK=$(echo "$BODY" | grep -o '"magicLink":"[^"]*"' | sed 's/"magicLink":"//;s/"//')
+
+            echo ""
+            echo "Results:"
+            echo "  Session ID: $SESSION_ID"
+            echo "  Session URL: $SESSION_URL"
+            echo "  App ID: $APP_ID"
+            echo "  Magic Link: $MAGIC_LINK"
+
+            # Set outputs
+            echo "session_id=$SESSION_ID" >> $GITHUB_OUTPUT
+            echo "session_url=$SESSION_URL" >> $GITHUB_OUTPUT
+            echo "app_id=$APP_ID" >> $GITHUB_OUTPUT
+            echo "magic_link=$MAGIC_LINK" >> $GITHUB_OUTPUT
+
+            # Save to env for Slack
+            echo "SESSION_ID=$SESSION_ID" >> $GITHUB_ENV
+            echo "SESSION_URL=$SESSION_URL" >> $GITHUB_ENV
+            echo "APP_ID=$APP_ID" >> $GITHUB_ENV
+            echo "MAGIC_LINK=$MAGIC_LINK" >> $GITHUB_ENV
+          else
+            echo "API call failed (HTTP $HTTP_CODE)"
+            echo "$BODY"
+            exit 1
+          fi
+
+      # ========================================================================
+      # Slack Notification - Production
+      # ========================================================================
+      - name: Send Slack Notification (Production)
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && env.SESSION_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "Slack webhook not configured, skipping notification"
+            exit 0
+          fi
+
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          DEVICE_ID="${{ steps.get_version.outputs.SESSION_DEVICE_IDS || env.DEFAULT_DEVICE_ID }}"
+          # Use first device for display
+          DEVICE_ID=$(echo "$DEVICE_ID" | cut -d',' -f1)
+          REPO="${{ github.repository }}"
+          RUN_ID="${{ github.run_id }}"
+
+          echo "Sending Slack notification..."
+
+          # Build Slack payload
+          PAYLOAD='{"blocks":[{"type":"header","text":{"type":"plain_text","text":"'
+          PAYLOAD="${PAYLOAD}Production Session Started"
+          PAYLOAD="${PAYLOAD}"'","emoji":true}},{"type":"section","fields":[{"type":"mrkdwn","text":"*App Version:*\\n'
+          PAYLOAD="${PAYLOAD}${VERSION}"
+          PAYLOAD="${PAYLOAD}"'"},{"type":"mrkdwn","text":"*Device:*\\n`'
+          PAYLOAD="${PAYLOAD}${DEVICE_ID}"
+          PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Session ID:*\\n`'
+          PAYLOAD="${PAYLOAD}${{ env.SESSION_ID }}"
+
+          # Add validity if specified
+          if [ -n "$SESSION_VALIDITY" ]; then
+            PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Validity:*\\n'
+            PAYLOAD="${PAYLOAD}${SESSION_VALIDITY}"
+            PAYLOAD="${PAYLOAD}"' seconds"}]},{"type":"section","text":{"type":"mrkdwn","text":"*Session URL:*\\n<'
+          else
+            PAYLOAD="${PAYLOAD}"'`"}]},{"type":"section","text":{"type":"mrkdwn","text":"*Session URL:*\\n<'
+          fi
+
+          PAYLOAD="${PAYLOAD}${{ env.SESSION_URL }}"
+          PAYLOAD="${PAYLOAD}"'|Launch Session Now>"}},{"type":"context","elements":[{"type":"mrkdwn","text":"Triggered by GitHub Actions | <https://github.com/'
+          PAYLOAD="${PAYLOAD}${REPO}"
+          PAYLOAD="${PAYLOAD}"'/actions/runs/'
+          PAYLOAD="${PAYLOAD}${RUN_ID}"
+          PAYLOAD="${PAYLOAD}"'|View Workflow>"}]}]}'
+
+          # Send to Slack
+          SLACK_HTTP_CODE=$(curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            -w "%{http_code}" \
+            -s -o /dev/null)
+
+          if [ "$SLACK_HTTP_CODE" -eq 200 ]; then
+            echo "Slack notification sent successfully"
+          else
+            echo "Slack notification failed (HTTP $SLACK_HTTP_CODE)"
+          fi
+
+      # ========================================================================
+      # Combined API Call - Beta
+      # ========================================================================
+      - name: Upload & Start Session (Beta)
+        id: combined_api_beta
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && steps.get_version.outputs.BETA_ENABLED == 'true'
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+          BETA_DEVICE_IDS: ${{ steps.get_version.outputs.BETA_DEVICE_IDS || steps.get_version.outputs.SESSION_DEVICE_IDS || env.DEFAULT_DEVICE_ID }}
+          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY }}
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          APK_PATH="release-artifacts/NativeBridge-v${VERSION}-beta.apk"
+
+          if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
+            echo "NATIVEBRIDGE_API_KEY not configured - skipping beta"
+            exit 0
+          fi
+
+          # Wait before starting beta session
+          echo "Waiting 10 seconds before starting beta session..."
+          sleep 10
+
+          DEVICE_ID=$(echo "$BETA_DEVICE_IDS" | cut -d',' -f1)
+
+          echo "Using Combined API for Beta"
+          echo "  APK: $APK_PATH"
+          echo "  Device: $DEVICE_ID"
+
+          # Build curl command
+          CURL_CMD="curl -X POST https://api.nativebridge.io/application/session"
+          CURL_CMD="$CURL_CMD -H \"X-Api-Key: $NATIVEBRIDGE_API_KEY\""
+          CURL_CMD="$CURL_CMD -F \"file=@$APK_PATH\""
+          CURL_CMD="$CURL_CMD -F \"deviceId=$DEVICE_ID\""
+          CURL_CMD="$CURL_CMD -F \"deviceType=android\""
+          CURL_CMD="$CURL_CMD -F \"region=${{ env.DEFAULT_REGION }}\""
+          CURL_CMD="$CURL_CMD -F \"versionAction=create_new_version\""
+          CURL_CMD="$CURL_CMD -F \"accessType=public\""
+
+          if [ -n "$SESSION_VALIDITY" ]; then
+            if [ "$SESSION_VALIDITY" -lt 30 ]; then
+              SESSION_VALIDITY=30
+            fi
+            CURL_CMD="$CURL_CMD -F \"executionValidity=$SESSION_VALIDITY\""
+          fi
+
+          CURL_CMD="$CURL_CMD -w \"\\n%{http_code}\" -s"
+
+          RESPONSE=$(eval $CURL_CMD)
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "SUCCESS! Beta APK uploaded and session started"
+
+            SESSION_ID=$(echo "$BODY" | grep -o '"sessionId":"[^"]*"' | sed 's/"sessionId":"//;s/"//')
+            SESSION_URL=$(echo "$BODY" | grep -o '"sessionUrl":"[^"]*"' | sed 's/"sessionUrl":"//;s/"//')
+            APP_ID=$(echo "$BODY" | grep -o '"appId":"[^"]*"' | sed 's/"appId":"//;s/"//')
+            MAGIC_LINK=$(echo "$BODY" | grep -o '"magicLink":"[^"]*"' | sed 's/"magicLink":"//;s/"//')
+
+            echo ""
+            echo "Beta Results:"
+            echo "  Session ID: $SESSION_ID"
+            echo "  Session URL: $SESSION_URL"
+            echo "  App ID: $APP_ID"
+
+            echo "session_id=$SESSION_ID" >> $GITHUB_OUTPUT
+            echo "session_url=$SESSION_URL" >> $GITHUB_OUTPUT
+            echo "app_id=$APP_ID" >> $GITHUB_OUTPUT
+            echo "magic_link=$MAGIC_LINK" >> $GITHUB_OUTPUT
+
+            echo "BETA_SESSION_ID=$SESSION_ID" >> $GITHUB_ENV
+            echo "BETA_SESSION_URL=$SESSION_URL" >> $GITHUB_ENV
+            echo "BETA_APP_ID=$APP_ID" >> $GITHUB_ENV
+            echo "BETA_MAGIC_LINK=$MAGIC_LINK" >> $GITHUB_ENV
+          else
+            echo "Beta API call failed (HTTP $HTTP_CODE)"
+            echo "$BODY"
+            # Don't fail the whole workflow for beta
+          fi
+
+      # ========================================================================
+      # Slack Notification - Beta
+      # ========================================================================
+      - name: Send Slack Notification (Beta)
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true' && steps.get_version.outputs.BETA_ENABLED == 'true' && env.BETA_SESSION_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "Slack webhook not configured, skipping beta notification"
+            exit 0
+          fi
+
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          DEVICE_ID="${{ steps.get_version.outputs.BETA_DEVICE_IDS || steps.get_version.outputs.SESSION_DEVICE_IDS || env.DEFAULT_DEVICE_ID }}"
+          DEVICE_ID=$(echo "$DEVICE_ID" | cut -d',' -f1)
+          REPO="${{ github.repository }}"
+          RUN_ID="${{ github.run_id }}"
+
+          echo "Sending Slack notification for beta..."
+
+          PAYLOAD='{"blocks":[{"type":"header","text":{"type":"plain_text","text":"'
+          PAYLOAD="${PAYLOAD}Beta Session Started"
+          PAYLOAD="${PAYLOAD}"'","emoji":true}},{"type":"section","fields":[{"type":"mrkdwn","text":"*App Version:*\\n'
+          PAYLOAD="${PAYLOAD}${VERSION}-beta"
+          PAYLOAD="${PAYLOAD}"'"},{"type":"mrkdwn","text":"*Device:*\\n`'
+          PAYLOAD="${PAYLOAD}${DEVICE_ID}"
+          PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Session ID:*\\n`'
+          PAYLOAD="${PAYLOAD}${{ env.BETA_SESSION_ID }}"
+
+          if [ -n "$SESSION_VALIDITY" ]; then
+            PAYLOAD="${PAYLOAD}"'`"},{"type":"mrkdwn","text":"*Validity:*\\n'
+            PAYLOAD="${PAYLOAD}${SESSION_VALIDITY}"
+            PAYLOAD="${PAYLOAD}"' seconds"}]},{"type":"section","text":{"type":"mrkdwn","text":"*Beta Session URL:*\\n<'
+          else
+            PAYLOAD="${PAYLOAD}"'`"}]},{"type":"section","text":{"type":"mrkdwn","text":"*Beta Session URL:*\\n<'
+          fi
+
+          PAYLOAD="${PAYLOAD}${{ env.BETA_SESSION_URL }}"
+          PAYLOAD="${PAYLOAD}"'|Launch Beta Session Now>"}},{"type":"context","elements":[{"type":"mrkdwn","text":"Triggered by GitHub Actions | <https://github.com/'
+          PAYLOAD="${PAYLOAD}${REPO}"
+          PAYLOAD="${PAYLOAD}"'/actions/runs/'
+          PAYLOAD="${PAYLOAD}${RUN_ID}"
+          PAYLOAD="${PAYLOAD}"'|View Workflow>"}]}]}'
+
+          SLACK_HTTP_CODE=$(curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            -w "%{http_code}" \
+            -s -o /dev/null)
+
+          if [ "$SLACK_HTTP_CODE" -eq 200 ]; then
+            echo "Beta Slack notification sent successfully"
+          else
+            echo "Beta Slack notification failed (HTTP $SLACK_HTTP_CODE)"
+          fi
+
+      # Build Summary
+      - name: Build Summary
+        run: |
+          echo "### Release Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**APK Size:** ${{ env.APK_SIZE }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.get_version.outputs.BETA_ENABLED }}" == "true" ]; then
+            echo "**Beta APK Size:** ${{ env.BETA_APK_SIZE }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -n "${{ env.SESSION_URL }}" ]; then
+            echo "### Production Session" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- **App ID:** \`${{ env.APP_ID }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Session ID:** \`${{ env.SESSION_ID }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **[Launch Session](${{ env.SESSION_URL }})**" >> $GITHUB_STEP_SUMMARY
+            echo "- **[Magic Link](${{ env.MAGIC_LINK }})**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -n "${{ env.BETA_SESSION_URL }}" ]; then
+            echo "### Beta Session" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- **App ID:** \`${{ env.BETA_APP_ID }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Session ID:** \`${{ env.BETA_SESSION_ID }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **[Launch Beta Session](${{ env.BETA_SESSION_URL }})**" >> $GITHUB_STEP_SUMMARY
+            echo "- **[Beta Magic Link](${{ env.BETA_MAGIC_LINK }})**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ============================================================================
+  # Create GitHub Release
+  # ============================================================================
+  create-release:
+    name: Create GitHub Release
+    needs: [upload-and-session]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: get_version
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG_NAME#v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Download Production APK
+        uses: actions/download-artifact@v4
+        with:
+          name: NativeBridge-Android-v${{ steps.get_version.outputs.VERSION }}
+          path: artifacts/
+
+      - name: Download Beta APK
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: NativeBridge-Android-Beta-v${{ steps.get_version.outputs.VERSION }}
+          path: artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.get_version.outputs.TAG_NAME }}
+          draft: false
+          prerelease: ${{ contains(steps.get_version.outputs.TAG_NAME, 'beta') || contains(steps.get_version.outputs.TAG_NAME, 'alpha') }}
+          body: |
+            ## NativeBridge Release ${{ steps.get_version.outputs.VERSION }}
+
+            ### Quick Test via NativeBridge Cloud
+
+            ${{ needs.upload-and-session.outputs.session_url && format('**Production Session:** [Launch Now]({0})', needs.upload-and-session.outputs.session_url) || '' }}
+
+            ${{ needs.upload-and-session.outputs.beta_session_url && format('**Beta Session:** [Launch Beta]({0})', needs.upload-and-session.outputs.beta_session_url) || '' }}
+
+            ${{ needs.upload-and-session.outputs.magic_link && format('**Magic Link (Latest):** [Open App]({0})', needs.upload-and-session.outputs.magic_link) || '' }}
+
+            ### Build Information
+            - **Version:** ${{ steps.get_version.outputs.VERSION }}
+            - **Commit:** ${{ github.sha }}
+            - **Tag:** ${{ steps.get_version.outputs.TAG_NAME }}
+
+            ---
+
+            Built using the combined upload + session API.
+          files: |
+            artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}.apk
+            artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}-beta.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
