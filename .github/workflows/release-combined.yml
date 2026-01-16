@@ -380,7 +380,7 @@ jobs:
           echo "  Device: $DEVICE_ID"
 
           # Build curl command
-          CURL_CMD="curl -X POST https://api.nativebridge.io/application/session"
+          CURL_CMD="curl -X POST https://api.nativebridge.io/v1/application/session"
           CURL_CMD="$CURL_CMD -H \"X-Api-Key: $NATIVEBRIDGE_API_KEY\""
           CURL_CMD="$CURL_CMD -F \"file=@$APK_PATH\""
           CURL_CMD="$CURL_CMD -F \"deviceId=$DEVICE_ID\""
