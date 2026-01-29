@@ -155,6 +155,23 @@ You're running `SessionlessAppLaunchTest` but need `GenericAppLaunchTest`. Use:
 mvn exec:java -P session
 ```
 
+### Error: "504 Gateway Time-out"
+This means the HTTP client timed out before session creation completed.
+
+**Cause:** Sessionless mode takes 2-5 minutes to create session, but default HTTP timeout is 60 seconds.
+
+**Solution:** The test already configures 10-minute HTTP timeouts using `ClientConfig`:
+```java
+ClientConfig clientConfig = ClientConfig.defaultConfig()
+    .connectionTimeout(Duration.ofMinutes(10))
+    .readTimeout(Duration.ofMinutes(10));
+```
+
+If you still see this error:
+1. Check that you're using the latest `SessionlessAppLaunchTest.java`
+2. Verify the backend is not experiencing issues
+3. Try a different device (device may be offline)
+
 ### Session Creation Takes Too Long
 Sessionless mode requires 2-5 minutes to:
 - Find available device
@@ -163,7 +180,7 @@ Sessionless mode requires 2-5 minutes to:
 - Install app
 - Launch app
 
-This is normal. The test has a 15-minute timeout.
+This is normal. The test has 10-minute HTTP timeouts and 15-minute overall timeout.
 
 ## Comparison Table
 

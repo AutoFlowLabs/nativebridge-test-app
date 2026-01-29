@@ -1,5 +1,6 @@
 import io.appium.java_client.android.AndroidDriver;
 import io.appium.java_client.android.options.UiAutomator2Options;
+import org.openqa.selenium.remote.http.ClientConfig;
 import java.net.URL;
 import java.time.Duration;
 import java.util.HashMap;
@@ -132,7 +133,7 @@ public class SessionlessAppLaunchTest {
         System.out.println("  4. Install and launch app");
         System.out.println("  5. Connect Appium");
         System.out.println();
-        System.out.println("⏳ Please wait...");
+        System.out.println("⏳ Please wait (this may take 2-5 minutes)...");
         System.out.println();
 
         UiAutomator2Options options = new UiAutomator2Options();
@@ -141,10 +142,18 @@ public class SessionlessAppLaunchTest {
         options.setNoReset(true);
         options.setNewCommandTimeout(Duration.ofSeconds(600));
 
-        // Increase timeouts for sessionless mode
-        options.setCapability("appium:connectionTimeout", 300000);
-        options.setCapability("appium:readTimeout", 300000);
+        // CRITICAL: Increase timeouts for sessionless mode (session creation takes 2-5 minutes)
+        // These timeouts apply to the HTTP client that makes the session creation request
+        options.setCapability("appium:newCommandTimeout", 600);  // 10 minutes for commands
+
+        // HTTP client timeouts (in milliseconds) - MUST be longer than session creation time
+        // Default is 60 seconds which causes 504 Gateway Timeout
+        options.setCapability("appium:connectionTimeout", 600000);  // 10 minutes (connection timeout)
+        options.setCapability("appium:readTimeout", 600000);        // 10 minutes (read timeout)
+
+        // Additional Appium timeouts
         options.setCapability("uiautomator2ServerInstallTimeout", 60000);
+        options.setCapability("uiautomator2ServerLaunchTimeout", 60000);
 
         // NativeBridge sessionless options
         Map<String, Object> nativeBridgeOptions = new HashMap<>();
@@ -156,7 +165,15 @@ public class SessionlessAppLaunchTest {
         options.setCapability("appium:X-Api-Key", API_KEY);
 
         System.out.println("🚀 Connecting to NativeBridge (sessionless mode)...");
-        driver = new AndroidDriver(new URL(APPIUM_ENDPOINT), options);
+        System.out.println("   (HTTP timeout set to 10 minutes to handle session creation)");
+
+        // Create custom HTTP client with extended timeouts
+        // This is CRITICAL for sessionless mode as session creation takes 2-5 minutes
+        ClientConfig clientConfig = ClientConfig.defaultConfig()
+            .connectionTimeout(Duration.ofMinutes(10))  // Time to establish connection
+            .readTimeout(Duration.ofMinutes(10));        // Time to wait for response
+
+        driver = new AndroidDriver(clientConfig, new URL(APPIUM_ENDPOINT), options);
 
         System.out.println("✅ Session Created!");
         System.out.println("   Session ID: " + driver.getSessionId());
