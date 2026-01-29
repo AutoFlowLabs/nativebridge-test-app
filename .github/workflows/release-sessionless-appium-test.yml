@@ -284,8 +284,8 @@ jobs:
           echo "Test File: SessionlessAppLaunchTest.java"
           echo ""
 
-          # Run single test file using exec:java
-          mvn exec:java -Dexec.mainClass="SessionlessAppLaunchTest" 2>&1 | tee test-output.log
+          # Run single test file using exec:java with sessionless profile
+          mvn exec:java -P sessionless 2>&1 | tee test-output.log
 
           # Check exit code
           TEST_EXIT_CODE=${PIPESTATUS[0]}
