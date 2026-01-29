@@ -3,6 +3,7 @@ package tests;
 import io.appium.java_client.android.AndroidDriver;
 import io.appium.java_client.android.options.UiAutomator2Options;
 import org.openqa.selenium.remote.http.ClientConfig;
+import org.openqa.selenium.remote.http.HttpClient;
 import org.testng.annotations.*;
 
 import java.net.URL;
@@ -102,12 +103,14 @@ public class BaseTest {
         options.setCapability("nativeBridge:options", nativeBridgeOptions);
         options.setCapability("appium:X-Api-Key", API_KEY);
 
-        // Create custom HTTP client with extended timeouts
+        // Create custom HTTP client factory with extended timeouts
         ClientConfig clientConfig = ClientConfig.defaultConfig()
             .connectionTimeout(Duration.ofMinutes(10))
             .readTimeout(Duration.ofMinutes(10));
 
-        driver = new AndroidDriver(clientConfig, new URL(APPIUM_ENDPOINT), options);
+        HttpClient.Factory clientFactory = HttpClient.Factory.createDefault().createClient(clientConfig);
+
+        driver = new AndroidDriver(new URL(APPIUM_ENDPOINT), clientFactory, options);
 
         System.out.println("✅ Session Created!");
         System.out.println("   Session ID: " + driver.getSessionId());

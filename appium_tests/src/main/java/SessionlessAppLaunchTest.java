@@ -1,6 +1,7 @@
 import io.appium.java_client.android.AndroidDriver;
 import io.appium.java_client.android.options.UiAutomator2Options;
 import org.openqa.selenium.remote.http.ClientConfig;
+import org.openqa.selenium.remote.http.HttpClient;
 import java.net.URL;
 import java.time.Duration;
 import java.util.HashMap;
@@ -167,13 +168,15 @@ public class SessionlessAppLaunchTest {
         System.out.println("🚀 Connecting to NativeBridge (sessionless mode)...");
         System.out.println("   (HTTP timeout set to 10 minutes to handle session creation)");
 
-        // Create custom HTTP client with extended timeouts
+        // Create custom HTTP client factory with extended timeouts
         // This is CRITICAL for sessionless mode as session creation takes 2-5 minutes
         ClientConfig clientConfig = ClientConfig.defaultConfig()
             .connectionTimeout(Duration.ofMinutes(10))  // Time to establish connection
             .readTimeout(Duration.ofMinutes(10));        // Time to wait for response
 
-        driver = new AndroidDriver(clientConfig, new URL(APPIUM_ENDPOINT), options);
+        HttpClient.Factory clientFactory = HttpClient.Factory.createDefault().createClient(clientConfig);
+
+        driver = new AndroidDriver(new URL(APPIUM_ENDPOINT), clientFactory, options);
 
         System.out.println("✅ Session Created!");
         System.out.println("   Session ID: " + driver.getSessionId());
