@@ -195,8 +195,9 @@ jobs:
           echo "✅ Ready for sessionless Appium testing!" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================================
-  # Run Sessionless Appium Test
+  # Run Sessionless Appium Test (Single Java File)
   # Uses app_id from input OR from upload job
+  # Runs SessionlessAppLaunchTest.java using mvn exec:java
   # ============================================================================
   run-sessionless-test:
     name: Run Sessionless Appium Test
@@ -253,13 +254,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      - name: Compile Tests
+      - name: Compile Test
         working-directory: appium_tests
         run: |
-          echo "Compiling tests..."
-          mvn clean test-compile
+          echo "Compiling SessionlessAppLaunchTest..."
+          mvn clean compile
 
-      - name: Run Sessionless Appium Test Suite
+      - name: Run Sessionless Appium Test
         id: run_test
         working-directory: appium_tests
         timeout-minutes: 15
@@ -271,7 +272,7 @@ jobs:
           REGION: ${{ github.event.inputs.region || env.DEFAULT_REGION }}
         run: |
           echo "╔══════════════════════════════════════════════════════════╗"
-          echo "║          Starting Sessionless Appium Test Suite         ║"
+          echo "║          Starting Sessionless Appium Test               ║"
           echo "╚══════════════════════════════════════════════════════════╝"
           echo ""
           echo "Configuration:"
@@ -280,12 +281,11 @@ jobs:
           echo "  DEVICE_NAME: $DEVICE_NAME"
           echo "  REGION: $REGION"
           echo ""
-          echo "Test Framework: TestNG"
-          echo "Suite File: testng-sessionless.xml"
+          echo "Test File: SessionlessAppLaunchTest.java"
           echo ""
 
-          # Run TestNG tests using sessionless profile
-          mvn test -P sessionless -DtestMode=sessionless 2>&1 | tee test-output.log
+          # Run single test file using exec:java
+          mvn exec:java -Dexec.mainClass="SessionlessAppLaunchTest" 2>&1 | tee test-output.log
 
           # Check exit code
           TEST_EXIT_CODE=${PIPESTATUS[0]}

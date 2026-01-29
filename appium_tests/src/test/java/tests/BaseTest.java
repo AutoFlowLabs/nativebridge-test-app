@@ -30,12 +30,16 @@ public class BaseTest {
     protected static final String REGION = System.getenv("REGION");
 
     /**
-     * Set test mode from TestNG parameters or system property
+     * Setup test class - runs once before all tests in class
      */
-    @Parameters({"testMode"})
     @BeforeClass
-    public void setTestMode(@Optional("sessionless") String mode) {
-        this.testMode = mode;
+    public void setupClass() {
+        // Get test mode from system property (set via Maven -DtestMode=sessionless)
+        String systemTestMode = System.getProperty("testMode");
+        if (systemTestMode != null) {
+            this.testMode = systemTestMode;
+        }
+
         System.out.println("╔══════════════════════════════════════════════════════════╗");
         System.out.println("║     NativeBridge Appium Test - " + getClass().getSimpleName() + "     ║");
         System.out.println("╚══════════════════════════════════════════════════════════╝");
