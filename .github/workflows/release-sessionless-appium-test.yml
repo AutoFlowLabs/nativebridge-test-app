@@ -11,11 +11,7 @@ on:
       device_name:
         description: 'Device name (exact model name from dashboard)'
         required: true
-        default: 'Xiaomi Poco C75'
-      region:
-        description: 'Region (ind, usa, etc.)'
-        required: false
-        default: 'ind'
+        default: 'Samsung Galaxy S22 Ultra'
 
 env:
   DEFAULT_REGION: 'ind'

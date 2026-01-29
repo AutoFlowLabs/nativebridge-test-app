@@ -40,7 +40,7 @@ public class SessionlessAppLaunchTest {
 
     private static final String DEVICE_NAME = System.getenv("DEVICE_NAME") != null
         ? System.getenv("DEVICE_NAME")
-        : "Xiaomi Poco C75";  // UPDATE THIS for local testing
+        : "Samsung Galaxy S22 Ultra";  // UPDATE THIS for local testing
 
     private static final String REGION = System.getenv("REGION") != null
         ? System.getenv("REGION")
