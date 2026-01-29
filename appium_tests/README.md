@@ -201,13 +201,36 @@ open target/surefire-reports/index.html
 
 ## Troubleshooting
 
-### Error: "DEVICE_SESSION_ID is not set"
+### Tests are Skipped: "Required environment variables not set"
+
+**Cause:** Environment variables are not set for the test mode.
+
+**For sessionless mode, set:**
+```bash
+export NATIVEBRIDGE_API_KEY="your-api-key"
+export APP_ID="HgWp"
+export DEVICE_NAME="Samsung Galaxy S22 Ultra"
+export REGION="ind"  # optional
+```
+
+**For session mode, set:**
+```bash
+export NATIVEBRIDGE_API_KEY="your-api-key"
+export DEVICE_SESSION_ID="dmz3"
+```
+
+Then run the tests again:
+```bash
+mvn test -P sessionless  # or -P session
+```
+
+### Error: "DEVICE_SESSION_ID is not set" (Legacy main classes)
 You're running `GenericAppLaunchTest` but need `SessionlessAppLaunchTest`. Use:
 ```bash
 mvn exec:java -P sessionless
 ```
 
-### Error: "APP_ID is not set"
+### Error: "APP_ID is not set" (Legacy main classes)
 You're running `SessionlessAppLaunchTest` but need `GenericAppLaunchTest`. Use:
 ```bash
 mvn exec:java -P session

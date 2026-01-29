@@ -17,6 +17,7 @@ import java.util.Map;
  */
 public class BaseTest {
     protected AndroidDriver driver;
+    protected String testMode = "sessionless";  // Default test mode
 
     // Appium endpoint
     protected static final String APPIUM_ENDPOINT = "https://api.nativebridge.io/appium/wd/hub";
@@ -29,22 +30,24 @@ public class BaseTest {
     protected static final String REGION = System.getenv("REGION");
 
     /**
-     * Get test mode from system property
-     * Options: "session" or "sessionless"
+     * Set test mode from TestNG parameters or system property
      */
-    protected String getTestMode() {
-        return System.getProperty("testMode", "sessionless");
-    }
-
-    /**
-     * Setup method - runs before each test class
-     */
+    @Parameters({"testMode"})
     @BeforeClass
-    public void setupClass() {
+    public void setTestMode(@Optional("sessionless") String mode) {
+        this.testMode = mode;
         System.out.println("╔══════════════════════════════════════════════════════════╗");
         System.out.println("║     NativeBridge Appium Test - " + getClass().getSimpleName() + "     ║");
         System.out.println("╚══════════════════════════════════════════════════════════╝");
+        System.out.println("Test Mode: " + this.testMode);
         System.out.println();
+    }
+
+    /**
+     * Get test mode
+     */
+    protected String getTestMode() {
+        return this.testMode;
     }
 
     /**
@@ -59,9 +62,24 @@ public class BaseTest {
         System.out.println("  API Key: " + (API_KEY != null ? API_KEY.substring(0, Math.min(10, API_KEY.length())) + "..." : "NOT SET"));
         System.out.println();
 
+        // Check if required environment variables are set
         if ("sessionless".equals(testMode)) {
+            if (API_KEY == null || APP_ID == null || DEVICE_NAME == null) {
+                String message = "❌ SKIPPING TESTS: Required environment variables not set for sessionless mode\n" +
+                                "   Required: NATIVEBRIDGE_API_KEY, APP_ID, DEVICE_NAME\n" +
+                                "   Set these environment variables and try again.";
+                System.err.println(message);
+                throw new org.testng.SkipException(message);
+            }
             setupSessionlessDriver();
         } else {
+            if (API_KEY == null || DEVICE_SESSION_ID == null) {
+                String message = "❌ SKIPPING TESTS: Required environment variables not set for session mode\n" +
+                                "   Required: NATIVEBRIDGE_API_KEY, DEVICE_SESSION_ID\n" +
+                                "   Set these environment variables and try again.";
+                System.err.println(message);
+                throw new org.testng.SkipException(message);
+            }
             setupSessionDriver();
         }
     }
