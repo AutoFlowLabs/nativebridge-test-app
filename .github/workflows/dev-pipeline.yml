@@ -1,0 +1,434 @@
+name: DEV Pipeline - Build and Upload to NativeBridge
+
+# ============================================================================
+# DEV PIPELINE
+# ============================================================================
+# Purpose: Build app and upload to NativeBridge
+#
+# Triggers:
+# 1. Push to 'main' or 'develop' branch (if commit message contains "nativebridge")
+# 2. Manual workflow dispatch (can configure parameters)
+#
+# Outputs:
+# - app_id: NativeBridge app ID
+# - nb_version: NativeBridge version
+# - magic_link: App installation link
+#
+# Next Step:
+# - Automatically triggers QA Pipeline if upload succeeds
+# ============================================================================
+
+on:
+  # Trigger 1: Push to specific branches
+  push:
+    branches:
+      - main
+      - develop
+      - staging
+
+  # Trigger 2: Manual trigger with configurable parameters
+  workflow_dispatch:
+    inputs:
+      upload_to_nativebridge:
+        description: 'Upload to NativeBridge? (If false, just builds)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      trigger_qa_pipeline:
+        description: 'Trigger QA Pipeline after upload?'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      device_name:
+        description: 'Device for QA tests (default: Samsung Galaxy S22 Ultra)'
+        required: false
+        default: 'Samsung Galaxy S22 Ultra'
+  
+env:
+  DEFAULT_DEVICE: 'Samsung Galaxy S22 Ultra'
+  DEFAULT_REGION: 'ind'
+
+jobs:
+  # ==========================================================================
+  # Job 1: Check if we should upload to NativeBridge
+  # For push triggers: Check if commit message contains "nativebridge"
+  # For manual triggers: Use the input parameter
+  # ==========================================================================
+  check-trigger:
+    name: Check Upload Trigger
+    runs-on: ubuntu-latest
+    outputs:
+      should_upload: ${{ steps.check.outputs.should_upload }}
+      trigger_reason: ${{ steps.check.outputs.trigger_reason }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need last 2 commits to get commit message
+
+      - name: Check if upload should happen
+        id: check
+        run: |
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          DEV Pipeline - Upload Check                    ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+
+          # Check if this is a manual trigger
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            SHOULD_UPLOAD="${{ github.event.inputs.upload_to_nativebridge }}"
+            REASON="Manual trigger (upload_to_nativebridge: $SHOULD_UPLOAD)"
+            echo "✓ Trigger: Manual workflow dispatch"
+            echo "✓ Upload to NativeBridge: $SHOULD_UPLOAD"
+          else
+            # This is a push trigger - check commit message
+            COMMIT_MSG=$(git log -1 --pretty=%B)
+            echo "✓ Trigger: Push to ${{ github.ref_name }}"
+            echo "✓ Commit message: $COMMIT_MSG"
+
+            if echo "$COMMIT_MSG" | grep -qi "nativebridge"; then
+              SHOULD_UPLOAD="true"
+              REASON="Push trigger (commit contains 'nativebridge')"
+              echo "✓ Commit message contains 'nativebridge' - will upload"
+            else
+              SHOULD_UPLOAD="false"
+              REASON="Push trigger (commit does not contain 'nativebridge')"
+              echo "✓ Commit message does not contain 'nativebridge' - skip upload"
+            fi
+          fi
+
+          echo ""
+          echo "should_upload=$SHOULD_UPLOAD" >> $GITHUB_OUTPUT
+          echo "trigger_reason=$REASON" >> $GITHUB_OUTPUT
+          echo "Decision: SHOULD_UPLOAD=$SHOULD_UPLOAD"
+          echo "Reason: $REASON"
+
+  # ==========================================================================
+  # Job 2: Build Application
+  # TODO: Replace this with your actual build steps
+  # For now, using pre-built APK from builds/ folder
+  # ==========================================================================
+  build-app:
+    name: Build Application
+    needs: [check-trigger]
+    runs-on: ubuntu-latest
+    outputs:
+      apk_path: ${{ steps.prepare.outputs.apk_path }}
+      apk_size: ${{ steps.prepare.outputs.apk_size }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Display Build Info
+        run: |
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          Building Application                            ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Upload to NativeBridge: ${{ needs.check-trigger.outputs.should_upload }}"
+          echo ""
+
+      # ========================================================================
+      # TODO: Add your actual build steps here
+      # ========================================================================
+      # Example Android build steps:
+      #
+      # - name: Set up JDK 17
+      #   uses: actions/setup-java@v4
+      #   with:
+      #     distribution: 'temurin'
+      #     java-version: '17'
+      #
+      # - name: Setup Android SDK
+      #   uses: android-actions/setup-android@v3
+      #
+      # - name: Build APK
+      #   run: |
+      #     cd android
+      #     ./gradlew assembleRelease
+      #
+      # - name: Sign APK
+      #   run: |
+      #     # Add signing steps here
+      #
+      # - name: Copy APK to builds folder
+      #   run: |
+      #     mkdir -p builds/
+      #     cp android/app/build/outputs/apk/release/app-release.apk \
+      #        builds/NativeBridge-Production.apk
+      # ========================================================================
+
+      - name: Prepare APK (Using Pre-built)
+        id: prepare
+        run: |
+          echo "📦 Using pre-built APK from builds/ folder"
+          echo "   (Replace this step with actual build steps in production)"
+          echo ""
+
+          # Check if APK exists
+          if [ ! -f "builds/NativeBridge-Production.apk" ]; then
+            echo "❌ ERROR: Pre-built APK not found at builds/NativeBridge-Production.apk"
+            echo ""
+            echo "Please either:"
+            echo "1. Add your APK to builds/NativeBridge-Production.apk, OR"
+            echo "2. Replace this step with actual build steps (see TODO above)"
+            exit 1
+          fi
+
+          APK_PATH="builds/NativeBridge-Production.apk"
+          APK_SIZE=$(ls -lh "$APK_PATH" | awk '{print $5}')
+
+          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+          echo "apk_size=$APK_SIZE" >> $GITHUB_OUTPUT
+
+          echo "✓ APK ready: $APK_PATH ($APK_SIZE)"
+
+      - name: Upload APK as Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-build-${{ github.sha }}
+          path: ${{ steps.prepare.outputs.apk_path }}
+          retention-days: 30
+
+      - name: Build Summary
+        run: |
+          echo "### Build Complete ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**APK Size:** ${{ steps.prepare.outputs.apk_size }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next:** Upload to NativeBridge = ${{ needs.check-trigger.outputs.should_upload }}" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================================================
+  # Job 3: Upload to NativeBridge
+  # Only runs if should_upload is true
+  # ==========================================================================
+  upload-to-nativebridge:
+    name: Upload to NativeBridge
+    needs: [check-trigger, build-app]
+    if: needs.check-trigger.outputs.should_upload == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      app_id: ${{ steps.upload.outputs.app_id }}
+      nb_version: ${{ steps.upload.outputs.nb_version }}
+      magic_link: ${{ steps.upload.outputs.magic_link }}
+      upload_success: ${{ steps.upload.outputs.success }}
+
+    steps:
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-build-${{ github.sha }}
+          path: apk-to-upload
+
+      - name: Upload APK to NativeBridge
+        id: upload
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+        run: |
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          Uploading to NativeBridge                       ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+
+          APK_PATH=$(find apk-to-upload -name "*.apk" | head -n 1)
+
+          if [ -z "$APK_PATH" ]; then
+            echo "❌ ERROR: APK not found"
+            exit 1
+          fi
+
+          if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
+            echo "❌ ERROR: NATIVEBRIDGE_API_KEY not configured"
+            exit 1
+          fi
+
+          echo "📦 APK: $APK_PATH"
+          echo "🔑 API Key: ${NATIVEBRIDGE_API_KEY:0:15}..."
+          echo ""
+          echo "Uploading..."
+
+          # Upload to NativeBridge
+          RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/application \
+            -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
+            -F "file=@$APK_PATH" \
+            -F "accessType=public" \
+            -F "versionAction=create_new_version" \
+            -F "sendNotification=true" \
+            -w "\n%{http_code}" \
+            -s)
+
+          # Parse response
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+            echo "✅ SUCCESS! APK uploaded to NativeBridge"
+            echo ""
+
+            # Extract app_id
+            APP_ID=$(echo "$BODY" | grep -o '"id":"[^"]*"' | sed 's/"id":"//;s/"//')
+
+            # Extract nb_version (NativeBridge version)
+            NB_VERSION=$(echo "$BODY" | grep -o '"version":"[^"]*"' | sed 's/"version":"//;s/"//')
+
+            # Extract magic_link
+            MAGIC_LINK=$(echo "$BODY" | grep -o '"magicLink":"[^"]*"' | sed 's/"magicLink":"//;s/"//')
+
+            # Validate extractions
+            if [ -z "$APP_ID" ]; then
+              echo "❌ ERROR: Could not extract app_id from response"
+              echo "Response: $BODY"
+              exit 1
+            fi
+
+            if [ -z "$NB_VERSION" ]; then
+              echo "⚠️  WARNING: Could not extract nb_version, using 'latest'"
+              NB_VERSION="latest"
+            fi
+
+            if [ -z "$MAGIC_LINK" ]; then
+              echo "⚠️  WARNING: Could not extract magic_link"
+              MAGIC_LINK="N/A"
+            fi
+
+            # Set outputs
+            echo "app_id=$APP_ID" >> $GITHUB_OUTPUT
+            echo "nb_version=$NB_VERSION" >> $GITHUB_OUTPUT
+            echo "magic_link=$MAGIC_LINK" >> $GITHUB_OUTPUT
+            echo "success=true" >> $GITHUB_OUTPUT
+
+            echo "╔══════════════════════════════════════════════════════════╗"
+            echo "║                Upload Complete!                          ║"
+            echo "╚══════════════════════════════════════════════════════════╝"
+            echo ""
+            echo "  App ID: $APP_ID"
+            echo "  NB Version: $NB_VERSION"
+            echo "  Magic Link: $MAGIC_LINK"
+            echo ""
+          else
+            echo "❌ Upload failed (HTTP $HTTP_CODE)"
+            echo "Response: $BODY"
+            echo "success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Upload Summary
+        run: |
+          echo "### Upload to NativeBridge ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**App ID:** \`${{ steps.upload.outputs.app_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**NB Version:** \`${{ steps.upload.outputs.nb_version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Magic Link:** [${{ steps.upload.outputs.magic_link }}](${{ steps.upload.outputs.magic_link }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger Reason:** ${{ needs.check-trigger.outputs.trigger_reason }}" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================================================
+  # Job 4: Trigger QA Pipeline
+  # Only runs if upload succeeded and trigger_qa_pipeline is true
+  # ==========================================================================
+  trigger-qa-pipeline:
+    name: Trigger QA Pipeline
+    needs: [check-trigger, upload-to-nativebridge]
+    if: |
+      needs.upload-to-nativebridge.outputs.upload_success == 'true' &&
+      (github.event.inputs.trigger_qa_pipeline != 'false')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger QA Pipeline
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const deviceName = '${{ github.event.inputs.device_name }}' || '${{ env.DEFAULT_DEVICE }}';
+            const region = '${{ github.event.inputs.region }}' || '${{ env.DEFAULT_REGION }}';
+
+            console.log('╔══════════════════════════════════════════════════════════╗');
+            console.log('║          Triggering QA Pipeline                          ║');
+            console.log('╚══════════════════════════════════════════════════════════╝');
+            console.log('');
+            console.log('App ID:', '${{ needs.upload-to-nativebridge.outputs.app_id }}');
+            console.log('NB Version:', '${{ needs.upload-to-nativebridge.outputs.nb_version }}');
+            console.log('Device:', deviceName);
+            console.log('Region:', region);
+            console.log('');
+
+            const result = await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'qa-pipeline.yml',
+              ref: context.ref,
+              inputs: {
+                app_id: '${{ needs.upload-to-nativebridge.outputs.app_id }}',
+                nb_version: '${{ needs.upload-to-nativebridge.outputs.nb_version }}',
+                device_name: deviceName,
+                region: region,
+                triggered_by: 'dev-pipeline'
+              }
+            });
+
+            console.log('✅ QA Pipeline triggered successfully!');
+            console.log('');
+
+      - name: Summary
+        run: |
+          echo "### QA Pipeline Triggered ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The QA Pipeline has been automatically triggered with:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **App ID:** \`${{ needs.upload-to-nativebridge.outputs.app_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **NB Version:** \`${{ needs.upload-to-nativebridge.outputs.nb_version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Device:** ${{ github.event.inputs.device_name || env.DEFAULT_DEVICE }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ github.event.inputs.region || env.DEFAULT_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the **Actions** tab to see the QA Pipeline run." >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================================================
+  # Job 5: Final Summary
+  # ==========================================================================
+  final-summary:
+    name: Pipeline Summary
+    needs: [check-trigger, build-app, upload-to-nativebridge, trigger-qa-pipeline]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          DEV Pipeline Complete                           ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Trigger: ${{ needs.check-trigger.outputs.trigger_reason }}"
+          echo "Build: ${{ needs.build-app.result }}"
+          echo "Upload: ${{ needs.upload-to-nativebridge.result }}"
+          echo "QA Trigger: ${{ needs.trigger-qa-pipeline.result }}"
+          echo ""
+
+          if [ "${{ needs.upload-to-nativebridge.result }}" == "success" ]; then
+            echo "✅ App uploaded to NativeBridge"
+            echo "   App ID: ${{ needs.upload-to-nativebridge.outputs.app_id }}"
+            echo "   NB Version: ${{ needs.upload-to-nativebridge.outputs.nb_version }}"
+          else
+            echo "⏭️  Upload skipped or failed"
+          fi
+
+          if [ "${{ needs.trigger-qa-pipeline.result }}" == "success" ]; then
+            echo "✅ QA Pipeline triggered"
+          elif [ "${{ needs.trigger-qa-pipeline.result }}" == "skipped" ]; then
+            echo "⏭️  QA Pipeline not triggered"
+          else
+            echo "❌ QA Pipeline trigger failed"
+          fi
