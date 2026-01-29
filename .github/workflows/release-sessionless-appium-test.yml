@@ -1,17 +1,44 @@
 name: Release with Sessionless Appium Test
 
-# Trigger on manual workflow dispatch
+# This workflow supports TWO modes:
+#
+# Mode 1: UPLOAD + TEST (default)
+#   - Leave 'app_id' empty
+#   - Workflow uploads APK to NativeBridge
+#   - Extracts app_id from response
+#   - Runs sessionless Appium test
+#
+# Mode 2: TEST ONLY (quick mode)
+#   - Provide 'app_id' parameter (e.g., "HgWp")
+#   - Workflow SKIPS upload step
+#   - Directly runs sessionless Appium test with provided app_id
+#   - Useful for testing existing apps without re-uploading
+#
+# Both modes use sessionless execution:
+#   - Auto-creates device session
+#   - Installs and launches app
+#   - Runs tests
+#   - Auto-deletes session (no cleanup needed!)
+
 on:
   workflow_dispatch:
     inputs:
+      app_id:
+        description: 'App ID (optional - if provided, skips upload step)'
+        required: false
+        default: ''
       version:
-        description: 'Version number (e.g., 1.5.0)'
-        required: true
+        description: 'Version number (required only if uploading APK)'
+        required: false
         default: '1.0.0-test'
       device_name:
         description: 'Device name (exact model name from dashboard)'
         required: true
         default: 'Samsung Galaxy S22 Ultra'
+      region:
+        description: 'Region (ind, usa, etc.)'
+        required: false
+        default: 'ind'
 
 env:
   DEFAULT_REGION: 'ind'
@@ -19,10 +46,12 @@ env:
 jobs:
   # ============================================================================
   # Upload APK Only (No Session Creation)
+  # Skipped if app_id is provided as input parameter
   # ============================================================================
   upload-apk:
     name: Upload APK to NativeBridge
     runs-on: ubuntu-latest
+    if: github.event.inputs.app_id == ''
     outputs:
       version: ${{ steps.get_version.outputs.VERSION }}
       app_id: ${{ steps.upload_apk.outputs.app_id }}
@@ -167,23 +196,41 @@ jobs:
 
   # ============================================================================
   # Run Sessionless Appium Test
+  # Uses app_id from input OR from upload job
   # ============================================================================
   run-sessionless-test:
     name: Run Sessionless Appium Test
     needs: [upload-apk]
+    if: always() && (needs.upload-apk.result == 'success' || github.event.inputs.app_id != '')
     runs-on: ubuntu-latest
 
     steps:
+      - name: Set App ID
+        id: set_app_id
+        run: |
+          # Use manual app_id if provided, otherwise use from upload job
+          if [ -n "${{ github.event.inputs.app_id }}" ]; then
+            APP_ID="${{ github.event.inputs.app_id }}"
+            SOURCE="manual input"
+          else
+            APP_ID="${{ needs.upload-apk.outputs.app_id }}"
+            SOURCE="uploaded APK"
+          fi
+
+          echo "app_id=$APP_ID" >> $GITHUB_OUTPUT
+          echo "source=$SOURCE" >> $GITHUB_OUTPUT
+
+          echo "Using App ID: $APP_ID (from $SOURCE)"
+
       - name: Display Test Configuration
         run: |
           echo "╔══════════════════════════════════════════════════════════╗"
           echo "║       Running Sessionless Appium Test                   ║"
           echo "╚══════════════════════════════════════════════════════════╝"
           echo ""
-          echo "App ID: ${{ needs.upload-apk.outputs.app_id }}"
+          echo "App ID: ${{ steps.set_app_id.outputs.app_id }} (from ${{ steps.set_app_id.outputs.source }})"
           echo "Device Name: ${{ github.event.inputs.device_name }}"
           echo "Region: ${{ github.event.inputs.region || env.DEFAULT_REGION }}"
-          echo "Version: ${{ needs.upload-apk.outputs.version }}"
           echo ""
           echo "Mode: SESSIONLESS (auto-creates and auto-deletes session)"
           echo ""
@@ -219,7 +266,7 @@ jobs:
         continue-on-error: true
         env:
           NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
-          APP_ID: ${{ needs.upload-apk.outputs.app_id }}
+          APP_ID: ${{ steps.set_app_id.outputs.app_id }}
           DEVICE_NAME: ${{ github.event.inputs.device_name }}
           REGION: ${{ github.event.inputs.region || env.DEFAULT_REGION }}
         run: |
@@ -229,7 +276,7 @@ jobs:
           echo ""
           echo "Configuration:"
           echo "  NATIVEBRIDGE_API_KEY: ${NATIVEBRIDGE_API_KEY:0:15}..."
-          echo "  APP_ID: $APP_ID"
+          echo "  APP_ID: $APP_ID (from ${{ steps.set_app_id.outputs.source }})"
           echo "  DEVICE_NAME: $DEVICE_NAME"
           echo "  REGION: $REGION"
           echo ""
@@ -256,7 +303,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sessionless-test-logs-${{ needs.upload-apk.outputs.version }}
+          name: sessionless-test-logs-${{ steps.set_app_id.outputs.app_id }}
           path: appium_tests/test-output.log
           retention-days: 30
 
@@ -279,11 +326,15 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Configuration:**" >> $GITHUB_STEP_SUMMARY
-          echo "- App ID: \`${{ needs.upload-apk.outputs.app_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- App ID: \`${{ steps.set_app_id.outputs.app_id }}\` (from ${{ steps.set_app_id.outputs.source }})" >> $GITHUB_STEP_SUMMARY
           echo "- Device: ${{ github.event.inputs.device_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- Mode: Sessionless (auto-cleanup enabled)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Magic Link:** [${{ needs.upload-apk.outputs.magic_link }}](${{ needs.upload-apk.outputs.magic_link }})" >> $GITHUB_STEP_SUMMARY
+
+          # Only show magic link if APK was uploaded
+          if [ -n "${{ needs.upload-apk.outputs.magic_link }}" ]; then
+            echo "**Magic Link:** [${{ needs.upload-apk.outputs.magic_link }}](${{ needs.upload-apk.outputs.magic_link }})" >> $GITHUB_STEP_SUMMARY
+          fi
 
   # ============================================================================
   # Send Slack Notification
@@ -304,9 +355,19 @@ jobs:
             exit 0
           fi
 
-          VERSION="${{ needs.upload-apk.outputs.version }}"
-          APP_ID="${{ needs.upload-apk.outputs.app_id }}"
-          MAGIC_LINK="${{ needs.upload-apk.outputs.magic_link }}"
+          # Use manual app_id if provided, otherwise from upload
+          if [ -n "${{ github.event.inputs.app_id }}" ]; then
+            APP_ID="${{ github.event.inputs.app_id }}"
+            APP_SOURCE="manual input"
+            VERSION="N/A"
+            MAGIC_LINK="N/A"
+          else
+            APP_ID="${{ needs.upload-apk.outputs.app_id }}"
+            APP_SOURCE="uploaded APK"
+            VERSION="${{ needs.upload-apk.outputs.version }}"
+            MAGIC_LINK="${{ needs.upload-apk.outputs.magic_link }}"
+          fi
+
           TEST_RESULT="${{ needs.run-sessionless-test.outputs.test_result || 'not_run' }}"
           REPO="${{ github.repository }}"
           RUN_ID="${{ github.run_id }}"
@@ -326,6 +387,19 @@ jobs:
 
           echo "Sending Slack notification..."
 
+          # Build magic link section conditionally
+          if [ "$MAGIC_LINK" != "N/A" ]; then
+            MAGIC_LINK_SECTION="{
+              \"type\": \"section\",
+              \"text\": {
+                \"type\": \"mrkdwn\",
+                \"text\": \"*Magic Link:*\n<${MAGIC_LINK}|Open App>\"
+              }
+            },"
+          else
+            MAGIC_LINK_SECTION=""
+          fi
+
           PAYLOAD=$(cat <<EOF
           {
             "blocks": [
@@ -342,11 +416,11 @@ jobs:
                 "fields": [
                   {
                     "type": "mrkdwn",
-                    "text": "*Version:*\n${VERSION}"
+                    "text": "*App ID:*\n\`${APP_ID}\` (${APP_SOURCE})"
                   },
                   {
                     "type": "mrkdwn",
-                    "text": "*App ID:*\n\`${APP_ID}\`"
+                    "text": "*Version:*\n${VERSION}"
                   },
                   {
                     "type": "mrkdwn",
@@ -358,13 +432,7 @@ jobs:
                   }
                 ]
               },
-              {
-                "type": "section",
-                "text": {
-                  "type": "mrkdwn",
-                  "text": "*Magic Link:*\n<${MAGIC_LINK}|Open App>"
-                }
-              },
+              ${MAGIC_LINK_SECTION}
               {
                 "type": "context",
                 "elements": [
