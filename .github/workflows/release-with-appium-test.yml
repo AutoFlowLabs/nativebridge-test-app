@@ -1,0 +1,633 @@
+name: Release with Appium Test
+
+# Trigger on release tags OR manual trigger for testing
+on:
+  push:
+    tags:
+      - 'v*'
+
+  # Manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.5.0)'
+        required: true
+        default: '1.0.0-test'
+      device_id:
+        description: 'Device ID for session'
+        required: true
+        default: '67a642531a4aa535498192f8'
+      session_validity:
+        description: 'Session validity in seconds (30-300, leave empty for API default)'
+        required: false
+        default: ''
+      build_beta:
+        description: 'Also build beta variant?'
+        required: false
+        type: boolean
+        default: false
+      run_appium_test:
+        description: 'Run Appium test after session creation?'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  DEFAULT_DEVICE_ID: '67a642531a4aa535498192f8'
+  DEFAULT_REGION: 'ind'
+
+jobs:
+  # ============================================================================
+  # Upload & Start Session (Combined API)
+  # ============================================================================
+  upload-and-session:
+    name: Upload APK & Start Session
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.VERSION }}
+      session_id: ${{ steps.combined_api.outputs.session_id }}
+      session_url: ${{ steps.combined_api.outputs.session_url }}
+      app_id: ${{ steps.combined_api.outputs.app_id }}
+      magic_link: ${{ steps.combined_api.outputs.magic_link }}
+      # Beta outputs
+      beta_session_id: ${{ steps.combined_api_beta.outputs.session_id }}
+      beta_session_url: ${{ steps.combined_api_beta.outputs.session_url }}
+      beta_app_id: ${{ steps.combined_api_beta.outputs.app_id }}
+      beta_magic_link: ${{ steps.combined_api_beta.outputs.magic_link }}
+
+    steps:
+      # Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Fetch tag annotations (only for tag-triggered runs)
+      - name: Fetch tag annotations
+        if: github.event_name == 'push'
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          echo "Fetching tag annotation for: $TAG_NAME"
+          git fetch --force origin tag "$TAG_NAME" --no-tags
+
+      # Extract version and config
+      - name: Extract version and config
+        id: get_version
+        run: |
+          # Check if this is a manual trigger or tag trigger
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # MANUAL TRIGGER - Use inputs from GitHub UI
+            echo "Manual trigger detected - using UI inputs"
+
+            VERSION="${{ github.event.inputs.version }}"
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "TAG_NAME=manual-v$VERSION" >> $GITHUB_OUTPUT
+            echo "Version: $VERSION"
+
+            # Session is always enabled for manual trigger
+            echo "SESSION_ENABLED=true" >> $GITHUB_OUTPUT
+
+            # Device ID from input
+            echo "SESSION_DEVICE_IDS=${{ github.event.inputs.device_id }}" >> $GITHUB_OUTPUT
+            echo "Device ID: ${{ github.event.inputs.device_id }}"
+
+            # Session validity from input (if provided)
+            if [ -n "${{ github.event.inputs.session_validity }}" ]; then
+              echo "SESSION_VALIDITY=${{ github.event.inputs.session_validity }}" >> $GITHUB_OUTPUT
+              echo "Session validity: ${{ github.event.inputs.session_validity }} seconds"
+            fi
+
+            # Beta from input
+            if [ "${{ github.event.inputs.build_beta }}" == "true" ]; then
+              echo "BETA_ENABLED=true" >> $GITHUB_OUTPUT
+              echo "BETA_DEVICE_IDS=${{ github.event.inputs.device_id }}" >> $GITHUB_OUTPUT
+              echo "Beta build: enabled"
+            else
+              echo "BETA_ENABLED=false" >> $GITHUB_OUTPUT
+            fi
+
+          else
+            # TAG TRIGGER - Parse from tag message
+            echo "Tag trigger detected - parsing tag message"
+
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+            VERSION=${TAG_NAME#v}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+            echo "Building version: $VERSION"
+
+            # Parse tag message for configuration
+            TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG_NAME")
+
+            # Check for session config
+            if echo "$TAG_MESSAGE" | grep -q "\[NB_SESSION_ENABLED\]"; then
+              echo "SESSION_ENABLED=true" >> $GITHUB_OUTPUT
+              echo "Session enabled in tag"
+
+              # Extract device IDs
+              DEVICE_IDS=$(echo "$TAG_MESSAGE" | grep -o "\[NB_DEVICE_IDS:[^]]*\]" | sed 's/\[NB_DEVICE_IDS://;s/\]//')
+              if [ -n "$DEVICE_IDS" ]; then
+                echo "SESSION_DEVICE_IDS=$DEVICE_IDS" >> $GITHUB_OUTPUT
+                echo "Device IDs: $DEVICE_IDS"
+              fi
+
+              # Extract session validity
+              VALIDITY=$(echo "$TAG_MESSAGE" | grep -o "\[NB_SESSION_VALIDITY:[^]]*\]" | sed 's/\[NB_SESSION_VALIDITY://;s/\]//')
+              if [ -n "$VALIDITY" ]; then
+                echo "SESSION_VALIDITY=$VALIDITY" >> $GITHUB_OUTPUT
+                echo "Session validity: $VALIDITY seconds"
+              fi
+            else
+              echo "SESSION_ENABLED=false" >> $GITHUB_OUTPUT
+            fi
+
+            # Check for beta build (only for tag triggers)
+            if echo "$TAG_MESSAGE" | grep -q "\[NB_BETA_ENABLED\]"; then
+              echo "BETA_ENABLED=true" >> $GITHUB_OUTPUT
+              echo "Beta build enabled"
+
+              BETA_DEVICE_IDS=$(echo "$TAG_MESSAGE" | grep -o "\[NB_BETA_DEVICE_IDS:[^]]*\]" | sed 's/\[NB_BETA_DEVICE_IDS://;s/\]//')
+              if [ -n "$BETA_DEVICE_IDS" ]; then
+                echo "BETA_DEVICE_IDS=$BETA_DEVICE_IDS" >> $GITHUB_OUTPUT
+                echo "Beta Device IDs: $BETA_DEVICE_IDS"
+              fi
+            else
+              echo "BETA_ENABLED=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      # Prepare APK files
+      - name: Prepare Production APK
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          mkdir -p release-artifacts
+
+          cp builds/NativeBridge-Production.apk \
+             release-artifacts/NativeBridge-v${VERSION}.apk
+
+          FILE_SIZE=$(ls -lh release-artifacts/NativeBridge-v${VERSION}.apk | awk '{print $5}')
+          echo "Production APK ready: $FILE_SIZE"
+          echo "APK_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+
+      - name: Prepare Beta APK
+        if: steps.get_version.outputs.BETA_ENABLED == 'true'
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+
+          if [ ! -f "builds/NativeBridge-Beta.apk" ]; then
+            echo "Beta APK not found at builds/NativeBridge-Beta.apk"
+            exit 1
+          fi
+
+          cp builds/NativeBridge-Beta.apk \
+             release-artifacts/NativeBridge-v${VERSION}-beta.apk
+
+          BETA_FILE_SIZE=$(ls -lh release-artifacts/NativeBridge-v${VERSION}-beta.apk | awk '{print $5}')
+          echo "Beta APK ready: $BETA_FILE_SIZE"
+          echo "BETA_APK_SIZE=$BETA_FILE_SIZE" >> $GITHUB_ENV
+
+      # Upload artifacts
+      - name: Upload Production APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NativeBridge-Android-v${{ steps.get_version.outputs.VERSION }}
+          path: release-artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}.apk
+          retention-days: 90
+
+      - name: Upload Beta APK Artifact
+        if: steps.get_version.outputs.BETA_ENABLED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: NativeBridge-Android-Beta-v${{ steps.get_version.outputs.VERSION }}
+          path: release-artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}-beta.apk
+          retention-days: 90
+
+      # ========================================================================
+      # Combined API Call - Production
+      # Uploads APK AND starts session in ONE request
+      # ========================================================================
+      - name: Upload & Start Session (Production)
+        id: combined_api
+        if: steps.get_version.outputs.SESSION_ENABLED == 'true'
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+          DEVICE_IDS: ${{ steps.get_version.outputs.SESSION_DEVICE_IDS || env.DEFAULT_DEVICE_ID }}
+          SESSION_VALIDITY: ${{ steps.get_version.outputs.SESSION_VALIDITY }}
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          APK_PATH="release-artifacts/NativeBridge-v${VERSION}.apk"
+
+          if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
+            echo "NATIVEBRIDGE_API_KEY not configured - skipping"
+            exit 0
+          fi
+
+          # For now, use the first device ID (combined API handles one device at a time)
+          DEVICE_ID=$(echo "$DEVICE_IDS" | cut -d',' -f1)
+
+          echo "Using Combined API: Upload + Session in one call"
+          echo "  APK: $APK_PATH"
+          echo "  Device: $DEVICE_ID"
+          echo "  Region: ${{ env.DEFAULT_REGION }}"
+
+          # Build curl command with optional parameters
+          CURL_CMD="curl -X POST https://api.nativebridge.io/v1/application/session"
+          CURL_CMD="$CURL_CMD -H \"X-Api-Key: $NATIVEBRIDGE_API_KEY\""
+          CURL_CMD="$CURL_CMD -F \"file=@$APK_PATH\""
+          CURL_CMD="$CURL_CMD -F \"deviceId=$DEVICE_ID\""
+          CURL_CMD="$CURL_CMD -F \"deviceType=android\""
+          CURL_CMD="$CURL_CMD -F \"region=${{ env.DEFAULT_REGION }}\""
+          CURL_CMD="$CURL_CMD -F \"versionAction=create_new_version\""
+          CURL_CMD="$CURL_CMD -F \"accessType=public\""
+
+          # Add session validity if specified
+          if [ -n "$SESSION_VALIDITY" ]; then
+            # Validate range (30-300 for session, but API might allow more)
+            if [ "$SESSION_VALIDITY" -lt 30 ]; then
+              SESSION_VALIDITY=30
+            fi
+            CURL_CMD="$CURL_CMD -F \"executionValidity=$SESSION_VALIDITY\""
+            echo "  Validity: $SESSION_VALIDITY seconds"
+          fi
+
+          CURL_CMD="$CURL_CMD -w \"\\n%{http_code}\" -s"
+
+          # Execute the combined API call
+          echo "Calling combined API..."
+          RESPONSE=$(eval $CURL_CMD)
+
+          # Parse response
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "SUCCESS! APK uploaded and session started in one call"
+
+            # Parse response fields
+            SESSION_ID=$(echo "$BODY" | grep -o '"sessionId":"[^"]*"' | sed 's/"sessionId":"//;s/"//')
+            SESSION_URL=$(echo "$BODY" | grep -o '"sessionUrl":"[^"]*"' | sed 's/"sessionUrl":"//;s/"//')
+            APP_ID=$(echo "$BODY" | grep -o '"appId":"[^"]*"' | sed 's/"appId":"//;s/"//')
+            MAGIC_LINK=$(echo "$BODY" | grep -o '"magicLink":"[^"]*"' | sed 's/"magicLink":"//;s/"//')
+
+            echo ""
+            echo "Results:"
+            echo "  Session ID: $SESSION_ID"
+            echo "  Session URL: $SESSION_URL"
+            echo "  App ID: $APP_ID"
+            echo "  Magic Link: $MAGIC_LINK"
+
+            # Set outputs
+            echo "session_id=$SESSION_ID" >> $GITHUB_OUTPUT
+            echo "session_url=$SESSION_URL" >> $GITHUB_OUTPUT
+            echo "app_id=$APP_ID" >> $GITHUB_OUTPUT
+            echo "magic_link=$MAGIC_LINK" >> $GITHUB_OUTPUT
+
+            # Save to env for Slack
+            echo "SESSION_ID=$SESSION_ID" >> $GITHUB_ENV
+            echo "SESSION_URL=$SESSION_URL" >> $GITHUB_ENV
+            echo "APP_ID=$APP_ID" >> $GITHUB_ENV
+            echo "MAGIC_LINK=$MAGIC_LINK" >> $GITHUB_ENV
+          else
+            echo "API call failed (HTTP $HTTP_CODE)"
+            echo "$BODY"
+            exit 1
+          fi
+
+      # Build Summary
+      - name: Build Summary
+        run: |
+          echo "### Release Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**APK Size:** ${{ env.APK_SIZE }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -n "${{ env.SESSION_URL }}" ]; then
+            echo "### Production Session" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- **App ID:** \`${{ env.APP_ID }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Session ID:** \`${{ env.SESSION_ID }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **[Launch Session](${{ env.SESSION_URL }})**" >> $GITHUB_STEP_SUMMARY
+            echo "- **[Magic Link](${{ env.MAGIC_LINK }})**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ============================================================================
+  # Run Appium Test on Created Session
+  # ============================================================================
+  run-appium-test:
+    name: Run Appium Test
+    needs: [upload-and-session]
+    runs-on: ubuntu-latest
+    # Only run if session was created AND run_appium_test is true (for manual) or tag trigger
+    if: |
+      needs.upload-and-session.outputs.session_id != '' &&
+      (github.event_name == 'push' || github.event.inputs.run_appium_test == 'true')
+
+    steps:
+      - name: Display Test Configuration
+        run: |
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          Running Appium Test on Created Session         ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Session ID: ${{ needs.upload-and-session.outputs.session_id }}"
+          echo "App ID: ${{ needs.upload-and-session.outputs.app_id }}"
+          echo "Version: ${{ needs.upload-and-session.outputs.version }}"
+          echo ""
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+
+      - name: Cache Maven Dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Display Test Configuration
+        env:
+          SESSION_ID: ${{ needs.upload-and-session.outputs.session_id }}
+          API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+        run: |
+          echo "Test configuration (using environment variables):"
+          echo "  Session ID: $SESSION_ID"
+          echo "  API Key: ${API_KEY:0:15}..."
+          echo ""
+          echo "✓ Configuration will be passed as environment variables"
+
+      - name: Compile Test
+        working-directory: appium_tests
+        run: |
+          echo "Compiling Appium test..."
+          mvn clean compile
+
+      - name: Run Appium Test
+        id: run_test
+        working-directory: appium_tests
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+          DEVICE_SESSION_ID: ${{ needs.upload-and-session.outputs.session_id }}
+        run: |
+          echo "Running GenericAppLaunchTest with environment variables..."
+          echo "  NATIVEBRIDGE_API_KEY: ${NATIVEBRIDGE_API_KEY:0:15}..."
+          echo "  DEVICE_SESSION_ID: $DEVICE_SESSION_ID"
+          echo ""
+
+          # Run the test and capture output
+          mvn exec:java -Dexec.mainClass="GenericAppLaunchTest" 2>&1 | tee test-output.log
+
+          # Check exit code
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
+
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            echo ""
+            echo "✅ TEST PASSED!"
+            echo "test_result=passed" >> $GITHUB_OUTPUT
+            exit 0
+          else
+            echo ""
+            echo "❌ TEST FAILED!"
+            echo "test_result=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Upload Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: appium-test-logs-${{ needs.upload-and-session.outputs.version }}
+          path: appium_tests/test-output.log
+          retention-days: 30
+
+      - name: Test Summary
+        if: always()
+        run: |
+          echo "### Appium Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.run_test.outputs.test_result }}" == "passed" ]; then
+            echo "✅ **Status:** PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The app launched successfully and all generic tests passed." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status:** FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "One or more tests failed. Please check the logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Session Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Session ID: \`${{ needs.upload-and-session.outputs.session_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- App ID: \`${{ needs.upload-and-session.outputs.app_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- [View Session](${{ needs.upload-and-session.outputs.session_url }})" >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const testResult = '${{ steps.run_test.outputs.test_result }}';
+            const sessionId = '${{ needs.upload-and-session.outputs.session_id }}';
+            const sessionUrl = '${{ needs.upload-and-session.outputs.session_url }}';
+
+            const body = testResult === 'passed'
+              ? `### ✅ Appium Test Passed\n\nThe app launched successfully on NativeBridge.\n\n**Session:** [${sessionId}](${sessionUrl})`
+              : `### ❌ Appium Test Failed\n\nThere were issues launching or testing the app.\n\n**Session:** [${sessionId}](${sessionUrl})\n\nCheck the workflow logs for details.`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  # ============================================================================
+  # Send Slack Notification (Combined)
+  # ============================================================================
+  notify-slack:
+    name: Send Slack Notification
+    needs: [upload-and-session, run-appium-test]
+    runs-on: ubuntu-latest
+    if: always() && needs.upload-and-session.outputs.session_url != ''
+
+    steps:
+      - name: Send Slack Notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "Slack webhook not configured, skipping notification"
+            exit 0
+          fi
+
+          VERSION="${{ needs.upload-and-session.outputs.version }}"
+          SESSION_ID="${{ needs.upload-and-session.outputs.session_id }}"
+          SESSION_URL="${{ needs.upload-and-session.outputs.session_url }}"
+          TEST_RESULT="${{ needs.run-appium-test.outputs.test_result || 'not_run' }}"
+          REPO="${{ github.repository }}"
+          RUN_ID="${{ github.run_id }}"
+
+          # Determine test status emoji and text
+          if [ "$TEST_RESULT" == "passed" ]; then
+            TEST_STATUS="✅ Passed"
+            TEST_COLOR="#36a64f"
+          elif [ "$TEST_RESULT" == "failed" ]; then
+            TEST_STATUS="❌ Failed"
+            TEST_COLOR="#ff0000"
+          else
+            TEST_STATUS="⏭️ Skipped"
+            TEST_COLOR="#cccccc"
+          fi
+
+          echo "Sending Slack notification..."
+
+          # Build Slack payload
+          PAYLOAD=$(cat <<EOF
+          {
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "🚀 Production Release & Test Complete",
+                  "emoji": true
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*App Version:*\n${VERSION}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Session ID:*\n\`${SESSION_ID}\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Appium Test:*\n${TEST_STATUS}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Session URL:*\n<${SESSION_URL}|Launch Session Now>"
+                }
+              },
+              {
+                "type": "context",
+                "elements": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "Triggered by GitHub Actions | <https://github.com/${REPO}/actions/runs/${RUN_ID}|View Workflow>"
+                  }
+                ]
+              }
+            ],
+            "attachments": [
+              {
+                "color": "${TEST_COLOR}",
+                "text": "Test Result: ${TEST_STATUS}"
+              }
+            ]
+          }
+          EOF
+          )
+
+          # Send to Slack
+          SLACK_HTTP_CODE=$(curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            -w "%{http_code}" \
+            -s -o /dev/null)
+
+          if [ "$SLACK_HTTP_CODE" -eq 200 ]; then
+            echo "Slack notification sent successfully"
+          else
+            echo "Slack notification failed (HTTP $SLACK_HTTP_CODE)"
+          fi
+
+  # ============================================================================
+  # Create GitHub Release
+  # ============================================================================
+  create-release:
+    name: Create GitHub Release
+    needs: [upload-and-session, run-appium-test]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version from previous job
+        id: get_version
+        run: |
+          VERSION="${{ needs.upload-and-session.outputs.version }}"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Download Production APK
+        uses: actions/download-artifact@v4
+        with:
+          name: NativeBridge-Android-v${{ steps.get_version.outputs.VERSION }}
+          path: artifacts/
+
+      - name: Download Test Logs
+        if: needs.run-appium-test.result != 'skipped'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: appium-test-logs-${{ steps.get_version.outputs.VERSION }}
+          path: artifacts/logs/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release v${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: ${{ contains(steps.get_version.outputs.VERSION, 'beta') || contains(steps.get_version.outputs.VERSION, 'alpha') }}
+          body: |
+            ## NativeBridge Release ${{ steps.get_version.outputs.VERSION }}
+
+            ### Appium Test Results
+            ${{ needs.run-appium-test.outputs.test_result == 'passed' && '✅ **All tests passed!**' || needs.run-appium-test.outputs.test_result == 'failed' && '❌ **Tests failed** - see logs for details' || '⏭️ Tests were not run' }}
+
+            ### Quick Test via NativeBridge Cloud
+
+            **Production Session:** [Launch Now](${{ needs.upload-and-session.outputs.session_url }})
+
+            **Magic Link (Latest):** [Open App](${{ needs.upload-and-session.outputs.magic_link }})
+
+            ### Build Information
+            - **Version:** ${{ steps.get_version.outputs.VERSION }}
+            - **Commit:** ${{ github.sha }}
+            - **Session ID:** `${{ needs.upload-and-session.outputs.session_id }}`
+            - **App ID:** `${{ needs.upload-and-session.outputs.app_id }}`
+
+            ---
+
+            Built and tested using the NativeBridge combined API + Appium automated testing.
+          files: |
+            artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}.apk
+            artifacts/logs/test-output.log
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
