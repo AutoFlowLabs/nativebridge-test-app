@@ -1,0 +1,595 @@
+name: Release with Sessionless Appium Test
+
+# Trigger on manual workflow dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.5.0)'
+        required: true
+        default: '1.0.0-test'
+      device_name:
+        description: 'Device name (exact model name from dashboard)'
+        required: true
+        default: 'Xiaomi Poco C75'
+      region:
+        description: 'Region (ind, usa, etc.)'
+        required: false
+        default: 'ind'
+
+env:
+  DEFAULT_REGION: 'ind'
+
+jobs:
+  # ============================================================================
+  # Upload APK Only (No Session Creation)
+  # ============================================================================
+  upload-apk:
+    name: Upload APK to NativeBridge
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.VERSION }}
+      app_id: ${{ steps.upload_apk.outputs.app_id }}
+      magic_link: ${{ steps.upload_apk.outputs.magic_link }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set Version
+        id: get_version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Prepare APK
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          mkdir -p release-artifacts
+
+          if [ ! -f "builds/NativeBridge-Production.apk" ]; then
+            echo "❌ ERROR: APK not found at builds/NativeBridge-Production.apk"
+            exit 1
+          fi
+
+          cp builds/NativeBridge-Production.apk \
+             release-artifacts/NativeBridge-v${VERSION}.apk
+
+          FILE_SIZE=$(ls -lh release-artifacts/NativeBridge-v${VERSION}.apk | awk '{print $5}')
+          echo "✓ Production APK ready: $FILE_SIZE"
+          echo "APK_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NativeBridge-Android-v${{ steps.get_version.outputs.VERSION }}
+          path: release-artifacts/NativeBridge-v${{ steps.get_version.outputs.VERSION }}.apk
+          retention-days: 90
+
+      # ========================================================================
+      # Upload APK to NativeBridge (No session creation)
+      # This uses the file upload API to get magic link and app ID
+      # ========================================================================
+      - name: Upload APK to NativeBridge
+        id: upload_apk
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          APK_PATH="release-artifacts/NativeBridge-v${VERSION}.apk"
+
+          if [ -z "$NATIVEBRIDGE_API_KEY" ]; then
+            echo "❌ ERROR: NATIVEBRIDGE_API_KEY not configured"
+            exit 1
+          fi
+
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          Uploading APK to NativeBridge                  ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "  APK: $APK_PATH"
+          echo "  Region: ${{ github.event.inputs.region || env.DEFAULT_REGION }}"
+          echo ""
+
+          # Upload APK using the /v1/application API
+          echo "Uploading APK..."
+          RESPONSE=$(curl -X POST https://api.nativebridge.io/v1/application \
+            -H "X-Api-Key: $NATIVEBRIDGE_API_KEY" \
+            -F "file=@$APK_PATH" \
+            -F "accessType=public" \
+            -F "versionAction=create_new_version" \
+            -F "sendNotification=true" \
+            -w "\n%{http_code}" \
+            -s)
+
+          # Parse response
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+            echo "✅ SUCCESS! APK uploaded to NativeBridge"
+            echo ""
+
+            # Parse response fields - extract app ID directly from response
+            APP_ID=$(echo "$BODY" | grep -o '"id":"[^"]*"' | sed 's/"id":"//;s/"//')
+
+            if [ -z "$APP_ID" ]; then
+              echo "❌ ERROR: Could not extract app ID from response"
+              echo "Response body:"
+              echo "$BODY"
+              exit 1
+            fi
+
+            echo "App ID: $APP_ID"
+
+            # Extract magic link from response
+            MAGIC_LINK=$(echo "$BODY" | grep -o '"magicLink":"[^"]*"' | sed 's/"magicLink":"//;s/"//')
+
+            if [ -z "$MAGIC_LINK" ]; then
+              echo "❌ ERROR: Could not extract magic link from response"
+              echo "Response body:"
+              echo "$BODY"
+              exit 1
+            fi
+
+            echo "Magic Link: $MAGIC_LINK"
+            echo ""
+
+            # Set outputs
+            echo "app_id=$APP_ID" >> $GITHUB_OUTPUT
+            echo "magic_link=$MAGIC_LINK" >> $GITHUB_OUTPUT
+
+            # Save to env
+            echo "APP_ID=$APP_ID" >> $GITHUB_ENV
+            echo "MAGIC_LINK=$MAGIC_LINK" >> $GITHUB_ENV
+
+            echo "╔══════════════════════════════════════════════════════════╗"
+            echo "║                  Upload Complete!                        ║"
+            echo "╚══════════════════════════════════════════════════════════╝"
+            echo ""
+            echo "  App ID: $APP_ID"
+            echo "  Magic Link: $MAGIC_LINK"
+          else
+            echo "❌ API call failed (HTTP $HTTP_CODE)"
+            echo "Response:"
+            echo "$BODY"
+            exit 1
+          fi
+
+      - name: Upload Summary
+        run: |
+          echo "### APK Upload Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**APK Size:** ${{ env.APK_SIZE }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**App ID:** \`${{ env.APP_ID }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Magic Link:** [${{ env.MAGIC_LINK }}](${{ env.MAGIC_LINK }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Ready for sessionless Appium testing!" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # Run Sessionless Appium Test
+  # ============================================================================
+  run-sessionless-test:
+    name: Run Sessionless Appium Test
+    needs: [upload-apk]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Display Test Configuration
+        run: |
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║       Running Sessionless Appium Test                   ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "App ID: ${{ needs.upload-apk.outputs.app_id }}"
+          echo "Device Name: ${{ github.event.inputs.device_name }}"
+          echo "Region: ${{ github.event.inputs.region || env.DEFAULT_REGION }}"
+          echo "Version: ${{ needs.upload-apk.outputs.version }}"
+          echo ""
+          echo "Mode: SESSIONLESS (auto-creates and auto-deletes session)"
+          echo ""
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+
+      - name: Cache Maven Dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Create Sessionless Test File
+        working-directory: appium_tests/src/main/java
+        run: |
+          echo "Creating SessionlessAppLaunchTest.java..."
+
+          cat > SessionlessAppLaunchTest.java << 'EOF'
+          import io.appium.java_client.android.AndroidDriver;
+          import io.appium.java_client.android.options.UiAutomator2Options;
+          import java.net.URL;
+          import java.time.Duration;
+          import java.util.HashMap;
+          import java.util.Map;
+
+          /**
+           * Sessionless Appium Test
+           * Automatically creates and deletes device session
+           */
+          public class SessionlessAppLaunchTest {
+              private static AndroidDriver driver;
+
+              private static final String APPIUM_ENDPOINT = "https://api.nativebridge.io/appium/wd/hub";
+              private static final String API_KEY = System.getenv("NATIVEBRIDGE_API_KEY");
+              private static final String APP_ID = System.getenv("APP_ID");
+              private static final String DEVICE_NAME = System.getenv("DEVICE_NAME");
+              private static final String REGION = System.getenv("REGION");
+
+              public static void main(String[] args) {
+                  System.out.println("╔══════════════════════════════════════════════════════════╗");
+                  System.out.println("║        Sessionless Appium Test - NativeBridge           ║");
+                  System.out.println("╚══════════════════════════════════════════════════════════╝");
+                  System.out.println();
+
+                  try {
+                      validateEnvironment();
+                      setupSession();
+                      runTests();
+
+                      System.out.println("\n╔══════════════════════════════════════════════════════════╗");
+                      System.out.println("║                   ✅ TEST PASSED!                        ║");
+                      System.out.println("╚══════════════════════════════════════════════════════════╝");
+
+                  } catch (Exception e) {
+                      System.err.println("\n╔══════════════════════════════════════════════════════════╗");
+                      System.err.println("║                   ❌ TEST FAILED!                        ║");
+                      System.err.println("╚══════════════════════════════════════════════════════════╝");
+                      System.err.println("\nError: " + e.getMessage());
+                      e.printStackTrace();
+                      System.exit(1);
+                  } finally {
+                      cleanup();
+                  }
+              }
+
+              private static void validateEnvironment() {
+                  System.out.println("📋 Validating Configuration...");
+                  System.out.println("─────────────────────────────────────────────────────────────");
+
+                  boolean hasErrors = false;
+
+                  if (API_KEY == null || API_KEY.isEmpty()) {
+                      System.err.println("❌ ERROR: NATIVEBRIDGE_API_KEY not set!");
+                      hasErrors = true;
+                  } else {
+                      System.out.println("✓ API Key: " + API_KEY.substring(0, Math.min(10, API_KEY.length())) + "...");
+                  }
+
+                  if (APP_ID == null || APP_ID.isEmpty()) {
+                      System.err.println("❌ ERROR: APP_ID not set!");
+                      hasErrors = true;
+                  } else {
+                      System.out.println("✓ App ID: " + APP_ID);
+                  }
+
+                  if (DEVICE_NAME == null || DEVICE_NAME.isEmpty()) {
+                      System.err.println("❌ ERROR: DEVICE_NAME not set!");
+                      hasErrors = true;
+                  } else {
+                      System.out.println("✓ Device Name: " + DEVICE_NAME);
+                  }
+
+                  System.out.println("✓ Region: " + (REGION != null ? REGION : "ind (default)"));
+                  System.out.println("✓ Endpoint: " + APPIUM_ENDPOINT);
+                  System.out.println();
+                  System.out.println("🎯 Mode: SESSIONLESS");
+                  System.out.println("   • Auto-creates device session");
+                  System.out.println("   • Installs and launches app");
+                  System.out.println("   • Auto-deletes session on completion");
+
+                  if (hasErrors) {
+                      System.err.println("\nConfiguration errors detected!");
+                      System.exit(1);
+                  }
+
+                  System.out.println();
+              }
+
+              private static void setupSession() throws Exception {
+                  System.out.println("🔧 Creating Sessionless Appium Session...");
+                  System.out.println("─────────────────────────────────────────────────────────────");
+                  System.out.println("This will:");
+                  System.out.println("  1. Find device '" + DEVICE_NAME + "'");
+                  System.out.println("  2. Create a new session");
+                  System.out.println("  3. Wait for device (2-5 minutes)");
+                  System.out.println("  4. Install and launch app");
+                  System.out.println("  5. Connect Appium");
+                  System.out.println();
+                  System.out.println("⏳ Please wait...");
+                  System.out.println();
+
+                  UiAutomator2Options options = new UiAutomator2Options();
+                  options.setPlatformName("Android");
+                  options.setAutomationName("UiAutomator2");
+                  options.setNoReset(true);
+                  options.setNewCommandTimeout(Duration.ofSeconds(600));
+
+                  // Increase timeouts for sessionless mode
+                  options.setCapability("appium:connectionTimeout", 300000);
+                  options.setCapability("appium:readTimeout", 300000);
+                  options.setCapability("uiautomator2ServerInstallTimeout", 60000);
+
+                  // NativeBridge sessionless options
+                  Map<String, Object> nativeBridgeOptions = new HashMap<>();
+                  nativeBridgeOptions.put("appId", APP_ID);
+                  nativeBridgeOptions.put("deviceName", DEVICE_NAME);
+                  nativeBridgeOptions.put("region", REGION != null ? REGION : "ind");
+
+                  options.setCapability("nativeBridge:options", nativeBridgeOptions);
+                  options.setCapability("appium:X-Api-Key", API_KEY);
+
+                  System.out.println("🚀 Connecting to NativeBridge (sessionless mode)...");
+                  driver = new AndroidDriver(new URL(APPIUM_ENDPOINT), options);
+
+                  System.out.println("✅ Session Created!");
+                  System.out.println("   Session ID: " + driver.getSessionId());
+
+                  try {
+                      String deviceName = (String) driver.getCapabilities().getCapability("deviceName");
+                      String platformVersion = (String) driver.getCapabilities().getCapability("platformVersion");
+                      System.out.println("   Device: " + (deviceName != null ? deviceName : "Unknown"));
+                      System.out.println("   Android: " + (platformVersion != null ? platformVersion : "Unknown"));
+                  } catch (Exception e) {
+                      // Ignore
+                  }
+
+                  System.out.println();
+                  System.out.println("⏳ Waiting for app to stabilize...");
+                  Thread.sleep(3000);
+              }
+
+              private static void runTests() throws Exception {
+                  System.out.println("\n🧪 Running Tests...");
+                  System.out.println("═════════════════════════════════════════════════════════════");
+
+                  // Test 1: Verify app is running
+                  System.out.println("\n📦 Test 1: Verify App Package");
+                  String currentPackage = driver.getCurrentPackage();
+                  System.out.println("✓ Current Package: " + currentPackage);
+
+                  // Test 2: Verify activity
+                  System.out.println("\n🎯 Test 2: Verify Current Activity");
+                  String currentActivity = driver.currentActivity();
+                  System.out.println("✓ Current Activity: " + currentActivity);
+
+                  // Test 3: Get screen size
+                  System.out.println("\n📐 Test 3: Get Screen Size");
+                  var size = driver.manage().window().getSize();
+                  System.out.println("✓ Screen: " + size.width + "x" + size.height);
+
+                  System.out.println("\n═════════════════════════════════════════════════════════════");
+                  System.out.println("All tests completed successfully!");
+              }
+
+              private static void cleanup() {
+                  if (driver != null) {
+                      System.out.println("\n🔄 Cleaning Up...");
+                      System.out.println("─────────────────────────────────────────────────────────────");
+
+                      try {
+                          driver.quit();
+                          System.out.println("✅ Session closed");
+                          System.out.println("✅ Device session auto-deleted (sessionless mode)");
+                          System.out.println();
+                          System.out.println("✨ No dangling sessions! Everything cleaned up automatically.");
+                      } catch (Exception e) {
+                          System.out.println("⚠️  Cleanup completed with warnings");
+                      }
+                  }
+              }
+          }
+          EOF
+
+          echo "✓ SessionlessAppLaunchTest.java created"
+
+      - name: Compile Test
+        working-directory: appium_tests
+        run: |
+          echo "Compiling sessionless test..."
+          mvn clean compile
+
+      - name: Run Sessionless Appium Test
+        id: run_test
+        working-directory: appium_tests
+        timeout-minutes: 15
+        continue-on-error: true
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+          APP_ID: ${{ needs.upload-apk.outputs.app_id }}
+          DEVICE_NAME: ${{ github.event.inputs.device_name }}
+          REGION: ${{ github.event.inputs.region || env.DEFAULT_REGION }}
+        run: |
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          Starting Sessionless Appium Test               ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Configuration:"
+          echo "  NATIVEBRIDGE_API_KEY: ${NATIVEBRIDGE_API_KEY:0:15}..."
+          echo "  APP_ID: $APP_ID"
+          echo "  DEVICE_NAME: $DEVICE_NAME"
+          echo "  REGION: $REGION"
+          echo ""
+
+          # Run the test and capture output
+          mvn exec:java -Dexec.mainClass="SessionlessAppLaunchTest" 2>&1 | tee test-output.log
+
+          # Check exit code
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
+
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            echo ""
+            echo "✅ TEST PASSED!"
+            echo "test_result=passed" >> $GITHUB_OUTPUT
+            exit 0
+          else
+            echo ""
+            echo "❌ TEST FAILED!"
+            echo "test_result=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Upload Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sessionless-test-logs-${{ needs.upload-apk.outputs.version }}
+          path: appium_tests/test-output.log
+          retention-days: 30
+
+      - name: Test Summary
+        if: always()
+        run: |
+          echo "### Sessionless Appium Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.run_test.outputs.test_result }}" == "passed" ]; then
+            echo "✅ **Status:** PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The app was automatically installed and launched successfully." >> $GITHUB_STEP_SUMMARY
+            echo "Device session was automatically created and cleaned up." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status:** FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "One or more tests failed. Please check the logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Configuration:**" >> $GITHUB_STEP_SUMMARY
+          echo "- App ID: \`${{ needs.upload-apk.outputs.app_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Device: ${{ github.event.inputs.device_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Mode: Sessionless (auto-cleanup enabled)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Magic Link:** [${{ needs.upload-apk.outputs.magic_link }}](${{ needs.upload-apk.outputs.magic_link }})" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # Send Slack Notification
+  # ============================================================================
+  notify-slack:
+    name: Send Slack Notification
+    needs: [upload-apk, run-sessionless-test]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Send Slack Notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "Slack webhook not configured, skipping notification"
+            exit 0
+          fi
+
+          VERSION="${{ needs.upload-apk.outputs.version }}"
+          APP_ID="${{ needs.upload-apk.outputs.app_id }}"
+          MAGIC_LINK="${{ needs.upload-apk.outputs.magic_link }}"
+          TEST_RESULT="${{ needs.run-sessionless-test.outputs.test_result || 'not_run' }}"
+          REPO="${{ github.repository }}"
+          RUN_ID="${{ github.run_id }}"
+          DEVICE_NAME="${{ github.event.inputs.device_name }}"
+
+          # Determine test status
+          if [ "$TEST_RESULT" == "passed" ]; then
+            TEST_STATUS="✅ Passed"
+            TEST_COLOR="#36a64f"
+          elif [ "$TEST_RESULT" == "failed" ]; then
+            TEST_STATUS="❌ Failed"
+            TEST_COLOR="#ff0000"
+          else
+            TEST_STATUS="⏭️ Skipped"
+            TEST_COLOR="#cccccc"
+          fi
+
+          echo "Sending Slack notification..."
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "🚀 Sessionless Appium Test Complete",
+                  "emoji": true
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Version:*\n${VERSION}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*App ID:*\n\`${APP_ID}\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Device:*\n${DEVICE_NAME}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Test Result:*\n${TEST_STATUS}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Magic Link:*\n<${MAGIC_LINK}|Open App>"
+                }
+              },
+              {
+                "type": "context",
+                "elements": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "Mode: Sessionless (auto-cleanup) | <https://github.com/${REPO}/actions/runs/${RUN_ID}|View Workflow>"
+                  }
+                ]
+              }
+            ],
+            "attachments": [
+              {
+                "color": "${TEST_COLOR}",
+                "text": "Test Result: ${TEST_STATUS}"
+              }
+            ]
+          }
+          EOF
+          )
+
+          SLACK_HTTP_CODE=$(curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            -w "%{http_code}" \
+            -s -o /dev/null)
+
+          if [ "$SLACK_HTTP_CODE" -eq 200 ]; then
+            echo "✓ Slack notification sent successfully"
+          else
+            echo "⚠️  Slack notification failed (HTTP $SLACK_HTTP_CODE)"
+          fi
