@@ -1,126 +1,208 @@
 # NativeBridge Appium Tests
 
-This directory contains automated Appium tests for the NativeBridge Debug Application.
+Automated Appium tests for NativeBridge application.
 
-## Structure
+## Test Files
 
-```
-appium_tests/
-├── pom.xml                          # Maven configuration
-├── src/main/java/
-│   └── GenericAppLaunchTest.java   # Main test file
-└── README.md                        # This file
-```
+- **GenericAppLaunchTest.java** - Session-based test (requires pre-created session)
+- **SessionlessAppLaunchTest.java** - Sessionless test (auto-creates and deletes session)
 
-## GenericAppLaunchTest.java
-
-A comprehensive test that validates app launch and basic functionality using NativeBridge's zero-config mode.
-
-### Prerequisites
+## Prerequisites
 
 - Java 17 or higher
 - Maven 3.6+
-- Valid NativeBridge API key
-- An active device session on NativeBridge
+- NativeBridge API key
 
-### Running Locally
+## Two Testing Modes
 
-1. **Update Configuration** in `GenericAppLaunchTest.java`:
-   ```java
-   private static final String API_KEY = "YOUR_API_KEY";
-   private static final String DEVICE_SESSION_ID = "YOUR_SESSION_ID";
-   ```
+### Mode 1: Session-Based Testing (GenericAppLaunchTest)
 
-2. **Compile**:
-   ```bash
-   mvn clean compile
-   ```
+**Use when:** You have a pre-created device session
 
-3. **Run**:
-   ```bash
-   mvn exec:java -Dexec.mainClass="GenericAppLaunchTest"
-   ```
+**Requires:**
+- `NATIVEBRIDGE_API_KEY`
+- `DEVICE_SESSION_ID`
 
-### CI/CD Usage
+**Behavior:**
+- Connects to existing session
+- App must be pre-installed
+- Session is NOT deleted after test
 
-This test is automatically run in the GitHub Actions workflow `release-with-appium-test.yml`.
+**Configuration:**
 
-The workflow:
-1. Creates a device session via NativeBridge API
-2. Automatically updates the test with the session ID
-3. Runs the test against the created session
-4. Reports results in Slack and GitHub
+Environment variables:
+```bash
+export NATIVEBRIDGE_API_KEY="Nb-..."
+export DEVICE_SESSION_ID="dmz3"
+```
 
-### Test Coverage
+Or update hardcoded values in `GenericAppLaunchTest.java` lines 43-49.
 
-The test performs the following validations:
+**Run:**
+```bash
+# Using default profile
+mvn exec:java
+
+# Or explicitly
+mvn exec:java -P session
+mvn exec:java -Dexec.mainClass="GenericAppLaunchTest"
+```
+
+---
+
+### Mode 2: Sessionless Testing (SessionlessAppLaunchTest)
+
+**Use when:** You want automatic session creation and cleanup
+
+**Requires:**
+- `NATIVEBRIDGE_API_KEY`
+- `APP_ID` (from `/v1/application` API upload)
+- `DEVICE_NAME` (exact model name like "Xiaomi Poco C75")
+- `REGION` (optional, defaults to "ind")
+
+**Behavior:**
+- Auto-creates device session
+- Auto-installs app
+- Auto-launches app
+- Auto-deletes session on completion
+- Takes 2-5 minutes for session creation
+
+**Configuration:**
+
+Environment variables:
+```bash
+export NATIVEBRIDGE_API_KEY="Nb-..."
+export APP_ID="HgWp"
+export DEVICE_NAME="Xiaomi Poco C75"
+export REGION="ind"
+```
+
+Or update hardcoded values in `SessionlessAppLaunchTest.java` lines 31-43.
+
+**Run:**
+```bash
+# Using sessionless profile
+mvn exec:java -P sessionless
+
+# Or explicitly
+mvn exec:java -Dexec.mainClass="SessionlessAppLaunchTest"
+```
+
+## Common Commands
+
+### Compile
+```bash
+mvn clean compile
+```
+
+### Run Session-Based Test
+```bash
+# Set environment variables
+export NATIVEBRIDGE_API_KEY="your-api-key"
+export DEVICE_SESSION_ID="your-session-id"
+
+# Run
+mvn exec:java
+# or
+mvn exec:java -P session
+```
+
+### Run Sessionless Test
+```bash
+# Set environment variables
+export NATIVEBRIDGE_API_KEY="your-api-key"
+export APP_ID="HgWp"
+export DEVICE_NAME="Xiaomi Poco C75"
+export REGION="ind"
+
+# Run
+mvn exec:java -P sessionless
+```
+
+## CI/CD Integration
+
+### Session-Based Workflow
+**File:** `.github/workflows/release-with-appium-test.yml`
+
+This workflow:
+1. Uploads APK to NativeBridge
+2. Creates a device session via `/v1/application/session`
+3. Extracts session ID
+4. Runs `GenericAppLaunchTest`
+5. Session remains active (manual cleanup required)
+
+### Sessionless Workflow
+**File:** `.github/workflows/release-sessionless-appium-test.yml`
+
+This workflow:
+1. Uploads APK via `/v1/application`
+2. Extracts app ID from response
+3. Creates `SessionlessAppLaunchTest.java` dynamically
+4. Runs sessionless test (auto-creates and deletes session)
+5. No manual cleanup needed!
+
+## Troubleshooting
+
+### Error: "DEVICE_SESSION_ID is not set"
+You're running `GenericAppLaunchTest` but need `SessionlessAppLaunchTest`. Use:
+```bash
+mvn exec:java -P sessionless
+```
+
+### Error: "APP_ID is not set"
+You're running `SessionlessAppLaunchTest` but need `GenericAppLaunchTest`. Use:
+```bash
+mvn exec:java -P session
+```
+
+### Session Creation Takes Too Long
+Sessionless mode requires 2-5 minutes to:
+- Find available device
+- Create session
+- Wait for device boot
+- Install app
+- Launch app
+
+This is normal. The test has a 15-minute timeout.
+
+## Comparison Table
+
+| Feature | Session-Based | Sessionless |
+|---------|---------------|-------------|
+| Test File | `GenericAppLaunchTest` | `SessionlessAppLaunchTest` |
+| Profile | `-P session` (default) | `-P sessionless` |
+| Requires | Session ID | App ID + Device Name |
+| Session Creation | Manual (pre-created) | Automatic |
+| Session Cleanup | Manual | Automatic |
+| Setup Time | Instant | 2-5 minutes |
+| Use Case | Quick tests, debugging | CI/CD, clean slate testing |
+
+## Test Coverage
+
+Both tests perform the following validations:
 
 1. ✅ **Verify Current Package** - Confirms app is running
 2. ✅ **Verify Current Activity** - Validates launcher activity
-3. ✅ **Get Page Source** - Retrieves UI hierarchy
-4. ✅ **Get Screen Size** - Checks device dimensions
-5. ✅ **Find Visible Elements** - Locates interactive UI elements
-6. ✅ **Check App State** - Verifies app is in foreground
-7. ✅ **Take Screenshot** - Captures screen image
-8. ✅ **Press Back Button** - Tests navigation
+3. ✅ **Get Screen Size** - Checks device dimensions
 
-### Features
+## Project Structure
 
-- **Zero Configuration**: No need to specify appPackage or appActivity
-- **Automatic App Launch**: Backend pre-launches the app before Appium connection
-- **Generic Tests**: Works with any Android app
-- **Detailed Logging**: Clear output showing each test step
+```
+appium_tests/
+├── pom.xml                             # Maven configuration with profiles
+├── src/main/java/
+│   ├── GenericAppLaunchTest.java      # Session-based test
+│   └── SessionlessAppLaunchTest.java  # Sessionless test
+└── README.md                           # This file
+```
 
-### Dependencies
+## Dependencies
 
 - Appium Java Client 8.6.0
 - Selenium WebDriver 4.15.0
 - SLF4J for logging
 
-### Environment Variables (CI/CD)
-
-The workflow uses these GitHub Secrets:
-- `NATIVEBRIDGE_API_KEY` - Your NativeBridge API key
-- `GITHUB_TOKEN` - Automatically provided by GitHub
-
-### Troubleshooting
-
-**Test fails with "Session not found"**:
-- Verify the session ID is correct
-- Check that the session is still active on NativeBridge dashboard
-
-**Test fails with "Authentication failed"**:
-- Verify your API key is valid
-- Check that the API key has permissions for the device
-
-**Test times out**:
-- Session creation can take 2-5 minutes for real devices
-- Increase timeout in workflow if needed
-
-### Adding More Tests
-
-To add additional tests:
-
-1. Create a new method in `GenericAppLaunchTest.java`
-2. Call it from the `runGenericTests()` method
-3. Follow the existing test pattern for consistent output
-
-Example:
-```java
-private static void test9_YourNewTest() throws Exception {
-    System.out.println("\n🧪 Test 9: Your New Test");
-    System.out.println("─────────────────────────────────────────────────────────────");
-
-    try {
-        // Your test logic here
-        System.out.println("✅ Test passed!");
-    } catch (Exception e) {
-        System.out.println("⚠️  Error: " + e.getMessage());
-    }
-}
-```
-
-### Support
+## Support
 
 For issues or questions:
 - Check the [NativeBridge Documentation](https://docs.nativebridge.io)
