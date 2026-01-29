@@ -22,7 +22,7 @@ on:
   # Trigger 1: Push to specific branches
   push:
     branches:
-      - main
+      # - main
       - develop
       - staging
 
@@ -53,6 +53,11 @@ on:
 env:
   DEFAULT_DEVICE: 'Samsung Galaxy S22 Ultra'
   DEFAULT_REGION: 'ind'
+
+# Permissions required for workflow to trigger other workflows
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   # ==========================================================================

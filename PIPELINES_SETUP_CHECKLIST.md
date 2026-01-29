@@ -38,11 +38,21 @@ Before you start, ensure you have:
 
 ### Step 2: Configure Workflow Permissions 🔐
 
+**Important:** The DEV Pipeline workflow file now includes `actions: write` permission, so you typically **don't need** to change repository-wide settings. However, if you still encounter permission errors when triggering QA Pipeline:
+
 - [ ] Go to: **Settings** → **Actions** → **General**
 - [ ] Scroll to: **"Workflow permissions"**
 - [ ] Select: ✅ **"Read and write permissions"**
-  - This allows DEV Pipeline to trigger QA Pipeline
+  - This allows workflows to trigger other workflows
 - [ ] Click: **"Save"**
+
+**Technical Note:** The workflow file includes:
+```yaml
+permissions:
+  contents: read
+  actions: write
+```
+This grants the necessary permissions at the workflow level.
 
 ### Step 3: Add Pre-built APK (Temporary) 📦
 
