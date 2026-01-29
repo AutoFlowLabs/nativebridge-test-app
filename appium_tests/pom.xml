@@ -57,9 +57,48 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.0</version>
                 <configuration>
+                    <!-- Default: Use session-based test -->
                     <mainClass>GenericAppLaunchTest</mainClass>
                 </configuration>
             </plugin>
         </plugins>
     </build>
+
+    <!-- Profiles for different test modes -->
+    <profiles>
+        <!-- Profile for session-based testing (default) -->
+        <profile>
+            <id>session</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <configuration>
+                            <mainClass>GenericAppLaunchTest</mainClass>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- Profile for sessionless testing -->
+        <profile>
+            <id>sessionless</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <configuration>
+                            <mainClass>SessionlessAppLaunchTest</mainClass>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
