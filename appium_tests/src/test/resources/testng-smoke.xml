@@ -1,0 +1,15 @@
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="NativeBridge Smoke Test Suite" verbose="1">
+    <!-- Quick smoke tests for basic functionality -->
+
+    <test name="Smoke Tests Only">
+        <groups>
+            <run>
+                <include name="smoke"/>
+            </run>
+        </groups>
+        <classes>
+            <class name="tests.AppLaunchTest"/>
+        </classes>
+    </test>
+</suite>

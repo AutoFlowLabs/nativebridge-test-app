@@ -253,13 +253,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      - name: Compile Test
+      - name: Compile Tests
         working-directory: appium_tests
         run: |
-          echo "Compiling sessionless test..."
-          mvn clean compile
+          echo "Compiling tests..."
+          mvn clean test-compile
 
-      - name: Run Sessionless Appium Test
+      - name: Run Sessionless Appium Test Suite
         id: run_test
         working-directory: appium_tests
         timeout-minutes: 15
@@ -271,7 +271,7 @@ jobs:
           REGION: ${{ github.event.inputs.region || env.DEFAULT_REGION }}
         run: |
           echo "╔══════════════════════════════════════════════════════════╗"
-          echo "║          Starting Sessionless Appium Test               ║"
+          echo "║          Starting Sessionless Appium Test Suite         ║"
           echo "╚══════════════════════════════════════════════════════════╝"
           echo ""
           echo "Configuration:"
@@ -280,9 +280,12 @@ jobs:
           echo "  DEVICE_NAME: $DEVICE_NAME"
           echo "  REGION: $REGION"
           echo ""
+          echo "Test Framework: TestNG"
+          echo "Suite File: testng-sessionless.xml"
+          echo ""
 
-          # Run the test and capture output (using sessionless profile)
-          mvn exec:java -P sessionless 2>&1 | tee test-output.log
+          # Run TestNG tests using sessionless profile
+          mvn test -P sessionless -DtestMode=sessionless 2>&1 | tee test-output.log
 
           # Check exit code
           TEST_EXIT_CODE=${PIPESTATUS[0]}

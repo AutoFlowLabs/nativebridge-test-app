@@ -1,17 +1,47 @@
 # NativeBridge Appium Tests
 
-Automated Appium tests for NativeBridge application.
+Automated Appium tests for NativeBridge application using **TestNG** framework.
 
-## Test Files
+## 🚀 Quick Start
 
-- **GenericAppLaunchTest.java** - Session-based test (requires pre-created session)
-- **SessionlessAppLaunchTest.java** - Sessionless test (auto-creates and deletes session)
+```bash
+# Set environment variables
+export NATIVEBRIDGE_API_KEY="your-api-key"
+export APP_ID="HgWp"
+export DEVICE_NAME="Samsung Galaxy S22 Ultra"
+export REGION="ind"
+
+# Run tests
+cd appium_tests
+mvn test -P sessionless
+```
 
 ## Prerequisites
 
 - Java 17 or higher
 - Maven 3.6+
 - NativeBridge API key
+
+## 📁 Project Structure
+
+```
+appium_tests/
+├── src/
+│   ├── main/java/                    # Legacy test classes (backward compatible)
+│   └── test/
+│       ├── java/tests/               # TestNG test classes
+│       │   ├── BaseTest.java         # Base class for all tests
+│       │   ├── AppLaunchTest.java    # App launch tests
+│       │   └── DeviceInfoTest.java   # Device info tests
+│       └── resources/                 # TestNG suite XML files
+│           ├── testng-sessionless.xml
+│           ├── testng-session.xml
+│           ├── testng-all.xml
+│           └── testng-smoke.xml
+├── pom.xml                            # Maven config with TestNG
+├── TESTNG_GUIDE.md                    # Detailed TestNG documentation
+└── QUICK_COMMANDS.md                  # Command reference
+```
 
 ## Two Testing Modes
 
@@ -88,58 +118,86 @@ mvn exec:java -P sessionless
 mvn exec:java -Dexec.mainClass="SessionlessAppLaunchTest"
 ```
 
-## Common Commands
+## 🎯 Running Tests (TestNG)
 
-### Compile
+### Run Test Suites (Recommended)
+
 ```bash
-mvn clean compile
+# Sessionless mode - runs all sessionless tests
+mvn test -P sessionless
+
+# Session-based mode - runs all session tests
+mvn test -P session
+
+# Smoke tests only - quick validation
+mvn test -P smoke -DtestMode=sessionless
+
+# Regression tests - comprehensive testing
+mvn test -P regression -DtestMode=sessionless
+
+# All tests
+mvn test -P all -DtestMode=sessionless
 ```
 
-### Run Session-Based Test
-```bash
-# Set environment variables
-export NATIVEBRIDGE_API_KEY="your-api-key"
-export DEVICE_SESSION_ID="your-session-id"
+### Run Specific Tests
 
-# Run
-mvn exec:java
-# or
-mvn exec:java -P session
+```bash
+# Run single test class
+mvn test -Dtest=AppLaunchTest -DtestMode=sessionless
+
+# Run specific test method
+mvn test -Dtest=AppLaunchTest#testVerifyAppPackage -DtestMode=sessionless
+
+# Run by group
+mvn test -Dgroups="smoke" -DtestMode=sessionless
 ```
 
-### Run Sessionless Test
-```bash
-# Set environment variables
-export NATIVEBRIDGE_API_KEY="your-api-key"
-export APP_ID="HgWp"
-export DEVICE_NAME="Xiaomi Poco C75"
-export REGION="ind"
+### Legacy Method (Backward Compatible)
 
-# Run
-mvn exec:java -P sessionless
+```bash
+# Old-style main class execution still works
+mvn exec:java -P sessionless    # Runs SessionlessAppLaunchTest
+mvn exec:java -P session        # Runs GenericAppLaunchTest
+```
+
+## 📊 Test Reports
+
+TestNG automatically generates HTML reports:
+
+```bash
+# After running tests, view reports
+open target/surefire-reports/index.html
+
+# Reports include:
+# - Test execution summary
+# - Pass/Fail status
+# - Execution time
+# - Test groups
+# - Failed test details
 ```
 
 ## CI/CD Integration
 
-### Session-Based Workflow
-**File:** `.github/workflows/release-with-appium-test.yml`
-
-This workflow:
-1. Uploads APK to NativeBridge
-2. Creates a device session via `/v1/application/session`
-3. Extracts session ID
-4. Runs `GenericAppLaunchTest`
-5. Session remains active (manual cleanup required)
-
-### Sessionless Workflow
+### Sessionless Workflow (TestNG)
 **File:** `.github/workflows/release-sessionless-appium-test.yml`
 
-This workflow:
-1. Uploads APK via `/v1/application`
-2. Extracts app ID from response
-3. Creates `SessionlessAppLaunchTest.java` dynamically
-4. Runs sessionless test (auto-creates and deletes session)
-5. No manual cleanup needed!
+```yaml
+- name: Run Sessionless Appium Test Suite
+  env:
+    NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+    APP_ID: ${{ steps.upload.outputs.app_id }}
+    DEVICE_NAME: "Samsung Galaxy S22 Ultra"
+    REGION: "ind"
+  run: |
+    mvn test -P sessionless -DtestMode=sessionless
+```
+
+**Features:**
+- Runs TestNG test suite
+- Auto-creates and deletes sessions
+- Generates test reports
+- Supports multiple test classes
+- Can run specific groups (smoke, regression)
 
 ## Troubleshooting
 
@@ -182,42 +240,64 @@ Sessionless mode requires 2-5 minutes to:
 
 This is normal. The test has 10-minute HTTP timeouts and 15-minute overall timeout.
 
-## Comparison Table
+## 📚 Documentation
 
-| Feature | Session-Based | Sessionless |
-|---------|---------------|-------------|
-| Test File | `GenericAppLaunchTest` | `SessionlessAppLaunchTest` |
-| Profile | `-P session` (default) | `-P sessionless` |
-| Requires | Session ID | App ID + Device Name |
-| Session Creation | Manual (pre-created) | Automatic |
-| Session Cleanup | Manual | Automatic |
-| Setup Time | Instant | 2-5 minutes |
-| Use Case | Quick tests, debugging | CI/CD, clean slate testing |
+- **[TESTNG_GUIDE.md](TESTNG_GUIDE.md)** - Comprehensive TestNG documentation
+  - Creating new tests
+  - Advanced features (data providers, dependencies, etc.)
+  - Parallel execution
+  - Custom reports
 
-## Test Coverage
+- **[QUICK_COMMANDS.md](QUICK_COMMANDS.md)** - Quick command reference
+  - All Maven commands
+  - Profile usage
+  - Examples
 
-Both tests perform the following validations:
+## 🆕 What's New: TestNG Framework
 
-1. ✅ **Verify Current Package** - Confirms app is running
-2. ✅ **Verify Current Activity** - Validates launcher activity
-3. ✅ **Get Screen Size** - Checks device dimensions
+### Benefits Over Old Approach
 
-## Project Structure
+| Feature | Old (main classes) | New (TestNG) |
+|---------|-------------------|--------------|
+| **Organization** | Single main class | Multiple test classes |
+| **Grouping** | None | smoke, regression |
+| **Reports** | Console only | HTML + XML reports |
+| **Parallel Execution** | No | Yes (with multiple devices) |
+| **Test Dependencies** | No | Yes |
+| **Assertions** | Manual | TestNG assertions |
+| **CI/CD** | Basic | Advanced with suite files |
+| **Flexibility** | Run all or nothing | Run specific tests/groups |
+
+### Test Structure
 
 ```
-appium_tests/
-├── pom.xml                             # Maven configuration with profiles
-├── src/main/java/
-│   ├── GenericAppLaunchTest.java      # Session-based test
-│   └── SessionlessAppLaunchTest.java  # Sessionless test
-└── README.md                           # This file
+✓ BaseTest.java               # Base class with setup/teardown
+  ├── AppLaunchTest.java      # App launch validations
+  └── DeviceInfoTest.java     # Device capability tests
+```
+
+### Running Options
+
+```bash
+# By suite XML
+mvn test -P sessionless           # Runs testng-sessionless.xml
+
+# By test class
+mvn test -Dtest=AppLaunchTest
+
+# By group
+mvn test -Dgroups="smoke"
+
+# Specific method
+mvn test -Dtest=AppLaunchTest#testVerifyAppPackage
 ```
 
 ## Dependencies
 
 - Appium Java Client 8.6.0
 - Selenium WebDriver 4.15.0
-- SLF4J for logging
+- TestNG 7.8.0
+- SLF4J 2.0.9
 
 ## Support
 

@@ -1,0 +1,12 @@
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="NativeBridge All Tests Suite" verbose="1" parallel="false">
+    <!-- This suite runs all test classes -->
+    <!-- Note: Configure testMode via Maven profile or system property -->
+
+    <test name="All Tests">
+        <classes>
+            <class name="tests.AppLaunchTest"/>
+            <class name="tests.DeviceInfoTest"/>
+        </classes>
+    </test>
+</suite>
