@@ -1,0 +1,445 @@
+name: Run QA Tests
+
+# ============================================================================
+# QA REPOSITORY WORKFLOW
+# ============================================================================
+# Purpose: Run Appium tests on NativeBridge
+#
+# This workflow is in the QA repository (qa-automation-repo)
+# It can be triggered by DEV repository OR run independently by QA team
+#
+# Triggers:
+# 1. Called by DEV repository (cross-repo trigger)
+# 2. Manual workflow dispatch by QA team
+#
+# Parameters:
+# - app_id: NativeBridge app ID (required)
+# - nb_version: App version (required)
+# - device_name: Device to test on (required)
+# - region: Region (optional, default: ind)
+# - triggered_by: 'dev-repo' or 'manual' (auto-set)
+# ============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_id:
+        description: 'App ID from NativeBridge'
+        required: true
+        type: string
+      nb_version:
+        description: 'NativeBridge version'
+        required: true
+        type: string
+      device_name:
+        description: 'Device name (e.g., Samsung Galaxy S22 Ultra)'
+        required: true
+        default: 'Samsung Galaxy S22 Ultra'
+        type: string
+      region:
+        description: 'Region (ind, usa, etc.)'
+        required: false
+        default: 'ind'
+        type: string
+      triggered_by:
+        description: 'Trigger source (dev-repo or manual)'
+        required: false
+        default: 'manual'
+        type: string
+
+jobs:
+  # ==========================================================================
+  # Job 1: Validate Test Parameters
+  # ==========================================================================
+  validate-inputs:
+    name: Validate Test Parameters
+    runs-on: ubuntu-latest
+    outputs:
+      app_id: ${{ steps.validate.outputs.app_id }}
+      nb_version: ${{ steps.validate.outputs.nb_version }}
+      device_name: ${{ steps.validate.outputs.device_name }}
+      region: ${{ steps.validate.outputs.region }}
+      triggered_by: ${{ steps.validate.outputs.triggered_by }}
+
+    steps:
+      - name: Validate Configuration
+        id: validate
+        run: |
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          QA Pipeline - Configuration Validation          ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+
+          APP_ID="${{ github.event.inputs.app_id }}"
+          NB_VERSION="${{ github.event.inputs.nb_version }}"
+          DEVICE_NAME="${{ github.event.inputs.device_name }}"
+          REGION="${{ github.event.inputs.region || 'ind' }}"
+          TRIGGERED_BY="${{ github.event.inputs.triggered_by || 'manual' }}"
+
+          # Validate required inputs
+          if [ -z "$APP_ID" ]; then
+            echo "❌ ERROR: app_id is required"
+            exit 1
+          fi
+
+          if [ -z "$NB_VERSION" ]; then
+            echo "❌ ERROR: nb_version is required"
+            exit 1
+          fi
+
+          if [ -z "$DEVICE_NAME" ]; then
+            echo "❌ ERROR: device_name is required"
+            exit 1
+          fi
+
+          # Display configuration
+          echo "Repository: ${{ github.repository }}"
+          echo ""
+          echo "✓ Trigger Source: $TRIGGERED_BY"
+          echo "✓ App ID: $APP_ID"
+          echo "✓ NB Version: $NB_VERSION"
+          echo "✓ Device: $DEVICE_NAME"
+          echo "✓ Region: $REGION"
+          echo ""
+
+          # Set outputs
+          echo "app_id=$APP_ID" >> $GITHUB_OUTPUT
+          echo "nb_version=$NB_VERSION" >> $GITHUB_OUTPUT
+          echo "device_name=$DEVICE_NAME" >> $GITHUB_OUTPUT
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "triggered_by=$TRIGGERED_BY" >> $GITHUB_OUTPUT
+
+          echo "✅ Configuration validated successfully"
+
+  # ==========================================================================
+  # Job 2: Setup Test Environment
+  # ==========================================================================
+  setup-environment:
+    name: Setup Test Environment
+    needs: [validate-inputs]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+
+      - name: Cache Maven Dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Compile Tests
+        working-directory: appium_tests
+        run: |
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          Compiling Test Code                             ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+          mvn clean compile
+          echo ""
+          echo "✅ Compilation successful"
+
+      - name: Upload Compiled Tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-tests-${{ github.run_id }}
+          path: appium_tests/
+          retention-days: 1
+
+  # ==========================================================================
+  # Job 3: Run Sessionless Appium Tests
+  # ==========================================================================
+  run-tests:
+    name: Run Sessionless Appium Tests
+    needs: [validate-inputs, setup-environment]
+    runs-on: ubuntu-latest
+    outputs:
+      test_result: ${{ steps.test.outputs.test_result }}
+      test_duration: ${{ steps.test.outputs.test_duration }}
+
+    steps:
+      - name: Download Compiled Tests
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-tests-${{ github.run_id }}
+          path: appium_tests
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Display Test Configuration
+        run: |
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          Running Sessionless Appium Tests                ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Repository: ${{ github.repository }}"
+          echo "Triggered By: ${{ needs.validate-inputs.outputs.triggered_by }}"
+          echo ""
+          echo "Configuration:"
+          echo "  API Key: ${NATIVEBRIDGE_API_KEY:0:15}..."
+          echo "  App ID: ${{ needs.validate-inputs.outputs.app_id }}"
+          echo "  NB Version: ${{ needs.validate-inputs.outputs.nb_version }}"
+          echo "  Device: ${{ needs.validate-inputs.outputs.device_name }}"
+          echo "  Region: ${{ needs.validate-inputs.outputs.region }}"
+          echo ""
+          echo "Mode: SESSIONLESS"
+          echo "  ✓ Auto-creates device session"
+          echo "  ✓ Auto-installs app"
+          echo "  ✓ Auto-deletes session after test"
+          echo ""
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+
+      - name: Run Tests
+        id: test
+        working-directory: appium_tests
+        timeout-minutes: 15
+        continue-on-error: true
+        env:
+          NATIVEBRIDGE_API_KEY: ${{ secrets.NATIVEBRIDGE_API_KEY }}
+          APP_ID: ${{ needs.validate-inputs.outputs.app_id }}
+          DEVICE_NAME: ${{ needs.validate-inputs.outputs.device_name }}
+          REGION: ${{ needs.validate-inputs.outputs.region }}
+        run: |
+          echo "Starting tests..."
+          START_TIME=$(date +%s)
+
+          # Run sessionless test
+          mvn exec:java -P sessionless 2>&1 | tee test-output.log
+
+          # Calculate duration
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          DURATION_MIN=$((DURATION / 60))
+          DURATION_SEC=$((DURATION % 60))
+
+          echo "test_duration=${DURATION_MIN}m ${DURATION_SEC}s" >> $GITHUB_OUTPUT
+
+          # Check exit code
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
+
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            echo ""
+            echo "╔══════════════════════════════════════════════════════════╗"
+            echo "║                   ✅ TESTS PASSED!                       ║"
+            echo "╚══════════════════════════════════════════════════════════╝"
+            echo "test_result=passed" >> $GITHUB_OUTPUT
+            exit 0
+          else
+            echo ""
+            echo "╔══════════════════════════════════════════════════════════╗"
+            echo "║                   ❌ TESTS FAILED!                       ║"
+            echo "╚══════════════════════════════════════════════════════════╝"
+            echo "test_result=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Upload Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ needs.validate-inputs.outputs.app_id }}-${{ github.run_id }}
+          path: appium_tests/test-output.log
+          retention-days: 30
+
+      - name: Upload Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: test-screenshots-${{ needs.validate-inputs.outputs.app_id }}-${{ github.run_id }}
+          path: appium_tests/screenshots/
+          retention-days: 30
+
+  # ==========================================================================
+  # Job 4: Generate Test Report
+  # ==========================================================================
+  generate-report:
+    name: Generate Test Report
+    needs: [validate-inputs, run-tests]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "║          QA Pipeline - Test Report                       ║"
+          echo "╚══════════════════════════════════════════════════════════╝"
+          echo ""
+
+          TEST_RESULT="${{ needs.run-tests.outputs.test_result }}"
+          DURATION="${{ needs.run-tests.outputs.test_duration }}"
+
+          echo "Test Result: $TEST_RESULT"
+          echo "Duration: $DURATION"
+          echo ""
+
+          # Create detailed GitHub summary
+          echo "## QA Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$TEST_RESULT" == "passed" ]; then
+            echo "### ✅ Tests Passed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "All Appium tests completed successfully!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Tests Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Some tests failed. Please check the test logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Test Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Repository** | \`${{ github.repository }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **App ID** | \`${{ needs.validate-inputs.outputs.app_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **NB Version** | \`${{ needs.validate-inputs.outputs.nb_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Device** | ${{ needs.validate-inputs.outputs.device_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Region** | ${{ needs.validate-inputs.outputs.region }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Duration** | $DURATION |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Triggered By** | ${{ needs.validate-inputs.outputs.triggered_by }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Download test artifacts from the **Artifacts** section:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- 📄 **Test Logs:** \`test-logs-${{ needs.validate-inputs.outputs.app_id }}-${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- 📸 **Screenshots:** \`test-screenshots-${{ needs.validate-inputs.outputs.app_id }}-${{ github.run_id }}\` (if available)" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================================================
+  # Job 5: Send Slack Notification
+  # ==========================================================================
+  notify-slack:
+    name: Send Slack Notification
+    needs: [validate-inputs, run-tests]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "Slack webhook not configured, skipping notification"
+            exit 0
+          fi
+
+          TEST_RESULT="${{ needs.run-tests.outputs.test_result }}"
+          DURATION="${{ needs.run-tests.outputs.test_duration }}"
+          APP_ID="${{ needs.validate-inputs.outputs.app_id }}"
+          NB_VERSION="${{ needs.validate-inputs.outputs.nb_version }}"
+          DEVICE="${{ needs.validate-inputs.outputs.device_name }}"
+          TRIGGERED_BY="${{ needs.validate-inputs.outputs.triggered_by }}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Determine status
+          if [ "$TEST_RESULT" == "passed" ]; then
+            STATUS="✅ Passed"
+            COLOR="#36a64f"
+          else
+            STATUS="❌ Failed"
+            COLOR="#ff0000"
+          fi
+
+          echo "Sending Slack notification..."
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "🧪 QA Test Results",
+                  "emoji": true
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Status:*\n${STATUS}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Duration:*\n${DURATION}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*App ID:*\n\`${APP_ID}\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Version:*\n\`${NB_VERSION}\`"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Device:*\n${DEVICE}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Triggered By:*\n${TRIGGERED_BY}"
+                  }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Repository:* \`${{ github.repository }}\`"
+                }
+              },
+              {
+                "type": "context",
+                "elements": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "<${RUN_URL}|View Full Report>"
+                  }
+                ]
+              }
+            ],
+            "attachments": [
+              {
+                "color": "${COLOR}",
+                "text": "Test Result: ${STATUS}"
+              }
+            ]
+          }
+          EOF
+          )
+
+          HTTP_CODE=$(curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            -w "%{http_code}" \
+            -s -o /dev/null)
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✓ Slack notification sent successfully"
+          else
+            echo "⚠️  Slack notification failed (HTTP $HTTP_CODE)"
+          fi
